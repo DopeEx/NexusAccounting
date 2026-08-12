@@ -5,6 +5,7 @@
 // ── Storage ────────────────────────────────────────────────────────────────
 
 import { activeTab, appendStatusText, confirmDialog, dayKey, fuelForMode, getLabelKey, getMode, infoDialog, periodLabelFor, renderMarkdown, renderNetCards, setActiveTab, setStore, store } from './common.js';
+import { bindServerSelector } from './server-switch.js';
 import { renderBattlesTab } from './tabs/battles.js';
 import { renderDebrisTab } from './tabs/debris.js';
 import { renderExpeditionsTab, setExpPage } from './tabs/expeditions.js';
@@ -22,6 +23,12 @@ import { getEventBreakdownForMode, getResourcesLostForMode, getSeriesForMode, ge
 import { renderTechTreeTab } from './tabs/techtree.js';
 
 export async function loadAll() {
+  const activeServer = await globalThis.nexusStorage?.getActiveServer?.() || { key: 's0' };
+  const serverSelect = document.getElementById('server-select');
+  if (serverSelect) {
+    serverSelect.value = activeServer.key || 's0';
+  }
+
   setStore(await browser.storage.local.get([
     'totals', 'daily', 'hourly', 'resources_lost', 'event_breakdown',
     'recent_reports', 'ships', 'last_scrape', 'last_error', 'records_cap',
@@ -66,7 +73,7 @@ export function updateStatus(lastScrape, lastError) {
   const el = document.getElementById('status-text');
   el.textContent = '';
   if (lastError) {
-    appendStatusText(`Error: ${lastError}`, 'error');
+    appendStatusText(el, `Error: ${lastError}`, 'error');
   } else if (lastScrape) {
     el.textContent = `Last scrape: ${new Date(lastScrape).toLocaleString()}`;
   } else {
@@ -242,14 +249,44 @@ export function positionControls() {
 
 // ── Controls ───────────────────────────────────────────────────────────────
 
+const serverSelect = document.getElementById('server-select');
+if (serverSelect) {
+  bindServerSelector(serverSelect, {
+    onChange: async () => {
+      await loadAll();
+      renderAll();
+      if (typeof window !== 'undefined' && window.location && !window.location.href.includes('nexuslegacy.space')) {
+        window.location.reload();
+      }
+    },
+  });
+}
+
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.nexus_active_server) {
+    loadAll().catch(() => {});
+  }
+});
+
 document.getElementById('btn-scrape').addEventListener('click', async function () {
   this.disabled = true;
   this.textContent = 'Scraping…';
   try {
-    await browser.runtime.sendMessage({ type: 'SCRAPE_NOW' });
+    const selectedServer = (document.getElementById('server-select')?.value ||
+      (await globalThis.nexusStorage?.getActiveServer?.())?.key || 's0');
+    const res = await browser.runtime.sendMessage({ type: 'SCRAPE_NOW', serverKey: selectedServer });
+    if (res?.error || res?.ok === false) {
+      throw new Error(res?.error || 'Scrape failed');
+    }
     await loadAll();
     this.textContent = 'Done ✓';
-  } catch {
+  } catch (err) {
+    const msg = err?.message || 'Error';
+    try {
+      updateStatus(store.last_scrape, msg);
+    } catch {
+      // Keep button feedback even if status rendering fails.
+    }
     this.textContent = 'Error';
   } finally {
     setTimeout(() => { this.disabled = false; this.textContent = 'Scrape Now'; }, 2000);

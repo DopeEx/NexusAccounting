@@ -3,7 +3,66 @@
 // is defined here on both Chrome (polyfilled) and Firefox (native). Tests import
 // this file directly with a stubbed `browser`, skipping the polyfill entirely.
 
-const GAME_URL = 'https://s0.nexuslegacy.space';
+let GAME_URL = 'https://s0.nexuslegacy.space';
+let GAME_ORIGIN = 'https://s0.nexuslegacy.space/';
+
+async function syncGameServer() {
+  try {
+    const server = await globalThis.nexusStorage?.getActiveServer?.();
+    if (server?.origin) {
+      GAME_URL = server.origin;
+      GAME_ORIGIN = `${server.origin}/`;
+      return;
+    }
+  } catch {
+    // Fall through to a tab-based detection below.
+  }
+
+  try {
+    const tabs = await browser.tabs.query({ url: '*://*.nexuslegacy.space/*' });
+    const active = tabs.find(tab => tab?.active) || tabs[0];
+    const server = active?.url ? globalThis.nexusStorage?.serverFromUrl?.(active.url) : null;
+    if (server?.origin) {
+      GAME_URL = server.origin;
+      GAME_ORIGIN = `${server.origin}/`;
+      return;
+    }
+  } catch {
+    // Ignore and keep the default S0 fallback below.
+  }
+
+  GAME_URL = 'https://s0.nexuslegacy.space';
+  GAME_ORIGIN = 'https://s0.nexuslegacy.space/';
+}
+
+browser.tabs?.onUpdated?.addListener(async (tabId, changeInfo, tab) => {
+  try {
+    if (!tab?.active) return;
+    if (!tab?.url || !tab.url.includes('nexuslegacy.space')) return;
+    const server = globalThis.nexusStorage?.serverFromUrl?.(tab.url);
+    if (!server) return;
+    if (changeInfo.url || changeInfo.status === 'complete') {
+      await globalThis.nexusStorage.setActiveServer(server.key);
+      await syncGameServer();
+    }
+  } catch {
+    // Ignore tab-state races; the next page sync will reconcile the server.
+  }
+});
+
+browser.tabs?.onActivated?.addListener(async () => {
+  try {
+    const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+    const tab = (tabs || [])[0] || null;
+    const server = tab?.url ? globalThis.nexusStorage?.serverFromUrl?.(tab.url) : null;
+    if (!server) return;
+    await globalThis.nexusStorage.setActiveServer(server.key);
+    await syncGameServer();
+  } catch {
+    // Ignore tab-state races; the next page sync will reconcile the server.
+  }
+});
+
 const REPORTS_PATH = '/api/fleet/survey-reports';
 const PIRATES_PATH = '/api/fleet/pirate-reports';
 const PVP_PATH = '/api/fleet/reports';   // player-vs-player combat reports
@@ -185,11 +244,10 @@ async function liveSearchScan() {
 
 // Clicking a live-search notification focuses (or opens) the game tab and asks
 // its content script to show the draggable matches window.
-const GAME_ORIGIN = 'https://s0.nexuslegacy.space/';
 browser.notifications?.onClicked?.addListener(async id => {
   if (!id.startsWith(LS_ALARM)) return;
   browser.notifications.clear(id);
-  const tabs = await browser.tabs.query({ url: '*://s0.nexuslegacy.space/*' });
+  const tabs = await browser.tabs.query({ url: `${GAME_URL}/*` });
   if (tabs.length) {
     const t = tabs[0];
     await browser.tabs.update(t.id, { active: true });
@@ -202,12 +260,20 @@ browser.notifications?.onClicked?.addListener(async id => {
   }
 });
 
-browser.action.onClicked.addListener(() => {
+browser.action.onClicked.addListener(async () => {
+  await syncGameServer();
   browser.tabs.create({ url: browser.runtime.getURL('dashboard.html') });
 });
 
-browser.runtime.onMessage.addListener(msg => {
-  if (msg.type === 'SCRAPE_NOW') return scrape().then(() => ({ ok: true }));
+browser.runtime.onMessage.addListener(async msg => {
+  if (msg?.type === 'SCRAPE_NOW' && msg.serverKey && globalThis.nexusStorage?.withServer) {
+    return globalThis.nexusStorage.withServer(msg.serverKey, async () => {
+      await syncGameServer();
+      return scrape();
+    });
+  }
+  await syncGameServer();
+  if (msg.type === 'SCRAPE_NOW') return scrape();
   if (msg.type === 'GET_FLEET') return getFleet(msg.planetId);
   if (msg.type === 'GET_SHIP_DEFS') return getShipDefs();
   if (msg.type === 'GET_PLANET_SHIPS') return getPlanetShips(msg.planetId);
@@ -462,6 +528,7 @@ async function apiGet(path) {
 // Firefox container tab, a private window, or as a partitioned (CHIPS)
 // cookie — so fall back to searching every cookie store domain-wide.
 async function getToken() {
+  await syncGameServer();
   const NAME = 'nexus_token';
   const urls = [GAME_URL, 'https://nexuslegacy.space'];
 
@@ -740,9 +807,10 @@ async function fuelEstimateGate() {
 async function gamePost(path, body) {
   if (!(body.ships || []).length) return { error: 'No ships selected.' };
   if (path === '/api/fleet/fuel-estimate') await fuelEstimateGate();
+  await syncGameServer();
   const token = await getToken();
   try {
-    const tabs = await browser.tabs.query({ url: 'https://s0.nexuslegacy.space/*' });
+    const tabs = await browser.tabs.query({ url: `${GAME_URL}/*` });
     if (!tabs.length) return { error: 'Open the Nexus Legacy game in a tab first.' };
     // Retry on 429, honouring Retry-After, then exponential backoff — same policy as apiFetch.
     for (let attempt = 0; ; attempt++) {
@@ -2516,8 +2584,9 @@ async function scrape() {
   const token = await getToken();
   if (!token) {
     console.warn('[NexusAccounting] No token — log in to the game first.');
-    await browser.storage.local.set({ last_error: 'Not logged in to Nexus Legacy.' });
-    return;
+    const error = 'Not logged in to Nexus Legacy.';
+    await browser.storage.local.set({ last_error: error });
+    return { ok: false, error };
   }
 
   await ensureSchema();
@@ -2579,11 +2648,17 @@ async function scrape() {
       console.log(`[NexusAccounting] Scraped ${nSurveys} surveys, ${nPirates} pirate, ${nMining} mining reports.`);
     });
     await maybeAutoBackup();
+    await browser.storage.local.set({
+      last_scrape: new Date().toISOString(),
+      last_error: null,
+    });
+    return { ok: true };
   } catch (err) {
     console.error('[NexusAccounting] Scrape failed:', err);
     // Cached planet may be gone (recolonized) — rediscover on next scrape.
     if (err.message.includes('→ 404')) await browser.storage.local.remove('planet_id');
     await browser.storage.local.set({ last_error: err.message });
+    return { ok: false, error: err.message };
   }
 }
 
