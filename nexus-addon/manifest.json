@@ -6,6 +6,7 @@
   "author": "Verrok",
   "homepage_url": "https://github.com/Verroq/NexusAccounting",
   "permissions": [
+    "tabs",
     "cookies",
     "storage",
     "alarms",
@@ -15,6 +16,8 @@
   ],
   "host_permissions": [
     "https://*.nexuslegacy.space/*",
+    "https://s0.nexuslegacy.space/*",
+    "https://nf.nexuslegacy.space/*",
     "https://nexuslegacy.space/*"
   ],
   "background": {
@@ -32,54 +35,54 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://s0.nexuslegacy.space/*"],
-      "js": ["sidebar-inject.js"],
+      "matches": ["https://s0.nexuslegacy.space/*", "https://nf.nexuslegacy.space/*", "https://*.nexuslegacy.space/*"],
+      "js": ["server-storage.js", "sidebar-inject.js"],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://s0.nexuslegacy.space/*"],
-      "js": ["galaxy-fetch-hook.js"],
+      "matches": ["https://s0.nexuslegacy.space/*", "https://nf.nexuslegacy.space/*", "https://*.nexuslegacy.space/*"],
+      "js": ["server-storage.js", "galaxy-fetch-hook.js"],
       "run_at": "document_start",
       "world": "MAIN"
     },
     {
-      "matches": ["https://s0.nexuslegacy.space/*"],
-      "js": ["galaxy-fields.js"],
+      "matches": ["https://s0.nexuslegacy.space/*", "https://nf.nexuslegacy.space/*", "https://*.nexuslegacy.space/*"],
+      "js": ["server-storage.js", "galaxy-fields.js"],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://s0.nexuslegacy.space/*"],
-      "js": ["empire-view.js"],
+      "matches": ["https://s0.nexuslegacy.space/*", "https://nf.nexuslegacy.space/*", "https://*.nexuslegacy.space/*"],
+      "js": ["server-storage.js", "empire-view.js"],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://s0.nexuslegacy.space/*"],
-      "js": ["guide-view.js"],
+      "matches": ["https://s0.nexuslegacy.space/*", "https://nf.nexuslegacy.space/*", "https://*.nexuslegacy.space/*"],
+      "js": ["server-storage.js", "guide-view.js"],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://s0.nexuslegacy.space/*"],
-      "js": ["logistics-view.js"],
+      "matches": ["https://s0.nexuslegacy.space/*", "https://nf.nexuslegacy.space/*", "https://*.nexuslegacy.space/*"],
+      "js": ["server-storage.js", "logistics-view.js"],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://s0.nexuslegacy.space/*"],
-      "js": ["upgrade-queue.js"],
+      "matches": ["https://s0.nexuslegacy.space/*", "https://nf.nexuslegacy.space/*", "https://*.nexuslegacy.space/*"],
+      "js": ["server-storage.js", "upgrade-queue.js"],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://s0.nexuslegacy.space/*"],
-      "js": ["building-upgrade.js"],
+      "matches": ["https://s0.nexuslegacy.space/*", "https://nf.nexuslegacy.space/*", "https://*.nexuslegacy.space/*"],
+      "js": ["server-storage.js", "building-upgrade.js"],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://s0.nexuslegacy.space/*"],
-      "js": ["tech-upgrade.js"],
+      "matches": ["https://s0.nexuslegacy.space/*", "https://nf.nexuslegacy.space/*", "https://*.nexuslegacy.space/*"],
+      "js": ["server-storage.js", "tech-upgrade.js"],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://s0.nexuslegacy.space/*"],
-      "js": ["ship-upgrade.js"],
+      "matches": ["https://s0.nexuslegacy.space/*", "https://nf.nexuslegacy.space/*", "https://*.nexuslegacy.space/*"],
+      "js": ["server-storage.js", "ship-upgrade.js"],
       "run_at": "document_idle"
     }
   ],
@@ -94,6 +97,8 @@
       ],
       "matches": [
         "https://s0.nexuslegacy.space/*",
+        "https://nf.nexuslegacy.space/*",
+        "https://*.nexuslegacy.space/*",
         "https://nexuslegacy.space/*"
       ]
     }

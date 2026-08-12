@@ -21,8 +21,25 @@ const SHIP_DEFS = {
 // Stubbed browser.storage.local backed by a plain object. Returns the store
 // so tests can inspect and seed it.
 function makeBrowserStub(store = {}) {
+  delete globalThis.nexusStorage;
+
+  const onInstalled = { listeners: [], addListener(fn) { this.listeners.push(fn); } };
+  const onMessage = { listeners: [], addListener(fn) { this.listeners.push(fn); } };
+  const onAlarm = { listeners: [], addListener(fn) { this.listeners.push(fn); } };
+  const onClicked = { listeners: [], addListener(fn) { this.listeners.push(fn); } };
+  const onNotificationsClicked = { listeners: [], addListener(fn) { this.listeners.push(fn); } };
+  const onStorageChanged = {
+    listeners: [],
+    addListener(fn) { this.listeners.push(fn); },
+    removeListener(fn) { this.listeners = this.listeners.filter(l => l !== fn); },
+    notify(changes, area = 'local') {
+      for (const listener of [...this.listeners]) listener(changes, area);
+    },
+  };
+
   global.browser = {
     storage: {
+      onChanged: onStorageChanged,
       local: {
         get: async keys => {
           if (keys === null) return { ...store };
@@ -31,24 +48,62 @@ function makeBrowserStub(store = {}) {
           for (const k of list) if (k in store) out[k] = store[k];
           return out;
         },
-        set: async obj => { Object.assign(store, obj); },
-        clear: async () => { for (const k of Object.keys(store)) delete store[k]; },
+        set: async obj => {
+          const before = {};
+          for (const [k, v] of Object.entries(obj)) {
+            if (Object.hasOwn(store, k) && store[k] !== v) before[k] = { oldValue: store[k], newValue: v };
+            else if (!Object.hasOwn(store, k)) before[k] = { newValue: v };
+          }
+          Object.assign(store, obj);
+          if (Object.keys(before).length) onStorageChanged.notify(before, 'local');
+        },
+        clear: async () => {
+          const before = {};
+          for (const [k, v] of Object.entries(store)) before[k] = { oldValue: v };
+          for (const k of Object.keys(store)) delete store[k];
+          if (Object.keys(before).length) onStorageChanged.notify(before, 'local');
+        },
         remove: async keys => {
-          for (const k of (Array.isArray(keys) ? keys : [keys])) delete store[k];
+          const list = Array.isArray(keys) ? keys : [keys];
+          const before = {};
+          for (const k of list) {
+            if (Object.hasOwn(store, k)) before[k] = { oldValue: store[k] };
+          }
+          for (const k of list) delete store[k];
+          if (Object.keys(before).length) onStorageChanged.notify(before, 'local');
         },
       },
     },
-    runtime: { onInstalled: { addListener() {} }, onMessage: { addListener() {} } },
-    alarms: { create() {}, onAlarm: { addListener() {} } },
-    browserAction: { onClicked: { addListener() {} } },
-    action: { onClicked: { addListener() {} } },
-    cookies: { get: async () => null },
-    tabs: { create() {} },
+    runtime: {
+      onInstalled,
+      onMessage,
+      getManifest: () => ({ version: 'test' }),
+      getURL: path => `chrome-extension://test/${path}`,
+    },
+    alarms: { create() {}, clear() {}, onAlarm },
+    browserAction: { onClicked },
+    action: { onClicked },
+    cookies: {
+      get: async () => null,
+      getAll: async () => [],
+      getAllCookieStores: async () => [],
+    },
+    tabs: {
+      create() {},
+      query: async () => [],
+      update() {},
+      sendMessage: async () => ({ ok: true }),
+    },
+    windows: { update() {} },
+    notifications: { create() {}, clear() {}, onClicked: onNotificationsClicked },
     webRequest: { onCompleted: { addListener() {} }, onBeforeRequest: { addListener() {} }, filterResponseData() {} },
     downloads: { download: async () => 1 },
   };
   global.Blob = class { constructor() {} };
-  global.URL = { createObjectURL: () => 'blob:test', revokeObjectURL() {} };
+  if (!global.URL || global.URL.name !== 'URL') {
+    global.URL = globalThis.URL;
+  }
+  global.setStatusText = () => {};
   return store;
 }
 
@@ -69,7 +124,24 @@ function setupDomStub() {
     querySelectorAll: () => [], dataset: {}, style: {}, options: { length: 0 },
     selectedOptions: [], value: '', textContent: '', className: '', checked: false,
   };
-  global.document = { getElementById: () => el, querySelectorAll: () => [] };
+  global.document = {
+    getElementById: () => el,
+    querySelectorAll: () => [],
+    createElement: () => ({
+      style: {},
+      appendChild() {},
+      append() {},
+      remove() {},
+      setAttribute() {},
+      addEventListener() {},
+      classList: { add() {}, remove() {} },
+      dataset: {},
+      textContent: '',
+      value: '',
+      checked: false,
+    }),
+  };
+  global.setStatusText = () => {};
   makeBrowserStub();
 }
 
