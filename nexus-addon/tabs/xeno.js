@@ -55,6 +55,16 @@ let xnRunning = false;
 let xnMissions = [];       // in-flight xeno_survey missions
 let xnTicks = [];
 
+export function resetXenoTab() {
+  inited = false;
+  xnPlanets = [];
+  xnTemplates = [];
+  xnMap = null;
+  xnRunning = false;
+  xnMissions = [];
+  xnTicks = [];
+}
+
 // ── Historical stats/charts/table (mirrors tabs/expeditions.js) ────────────
 export let chartXeno, chartXenoComp;
 export let xnReportPage = 1;
@@ -168,6 +178,10 @@ export async function initXenoTab() {
   await refreshTemplates();
   browser.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes.fleet_templates) refreshTemplates();
+    if (area === 'local' && changes.nexus_active_server) {
+      resetXenoTab();
+      void initXenoTab();
+    }
   });
 
   document.getElementById('xn-planet').addEventListener('change', e => {

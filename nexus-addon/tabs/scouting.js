@@ -28,6 +28,38 @@ const maxMissions = 1; // in-flight survey/investigate/collect fleets
 let scAutoScanRunning = false;
 let scAutoInvestigateRunning = false;
 let scAutoSalvageRunning = false;
+
+// automations are disabled when human verification is required.
+function disableAutomaticsOnHumanCheck() {
+  const ids = ['sc-auto', 'sc-investigate-auto', 'sc-salvage-auto'];
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.checked = false;
+    el.disabled = true;
+    rememberSelection(id, false);
+  }
+}
+
+export function resetScoutingTab() {
+  inited = false;
+  scPlanets = [];
+  scSystems = {};
+  scPending = [];
+  scReturning = [];
+  scInvestigating = new Set();
+  scJustSurveyed.clear();
+  scJustInvestigated.clear();
+  scTick = 0;
+  scMissions = [];
+  scAutoScanRunning = false;
+  scAutoInvestigateRunning = false;
+  scAutoSalvageRunning = false;
+  scTicks.scan = [];
+  scTicks.invest = [];
+  scTicks.debris = [];
+  scTicks.salvage = [];
+}
 // Per-surface bar updaters, each rebuilt by its own render. The 1s tick advances
 // all of them. Keyed so one render doesn't drop another surface's tickers.
 const scTicks = { scan: [], invest: [], debris: [], salvage: [] };
@@ -130,23 +162,15 @@ export async function initScoutingTab() {
   await refreshTemplates();
   browser.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes.fleet_templates) refreshTemplates();
+    if (area === 'local' && changes.nexus_active_server) {
+      resetScoutingTab();
+      void initScoutingTab();
+    }
   });
 
   document.getElementById('sc-scan').addEventListener('click', launchScan);
   document.getElementById('sc-refresh').addEventListener('click', loadActiveSurveys);
   document.getElementById('sc-planet').addEventListener('change', e => { rememberSelection('sc-planet', e.target.value); renderSurveys(); computeDebrisFuel(); computeSalvageFuel(); updateAvail(); });
-
-  // automations are disabled when human verification is required.
-  function disableAutomaticsOnHumanCheck() {
-    const ids = ['sc-auto', 'sc-investigate-auto', 'sc-salvage-auto'];
-    for (const id of ids) {
-      const el = document.getElementById(id);
-      if (!el) continue;
-      el.checked = false;
-      el.disabled = true;
-      rememberSelection(id, false);
-    }
-  }
 
   document.getElementById('sc-scan-template').addEventListener('change', e => rememberSelection('sc-scan-template', e.target.value));
   document.getElementById('sc-inv-template').addEventListener('change', e => { rememberSelection('sc-inv-template', e.target.value); computeFuel(); });
@@ -525,12 +549,6 @@ async function launchScan() {
   const r = await templateShips(document.getElementById('sc-scan-template').value, planetId);
   if (r.error) { setStatusText(status, r.error); return; }
 
-  // Confirmation Dialog disabled for now, since the template ships are already capped to the source planet's stock. The user can still cancel by switching templates or planets before clicking "Scan".
-  //
-  // if (!await confirmDialog(`Survey ${target.name} (${target.dist} away)?\n\n` +
-  //   `From: ${planet ? planet.name : planetId}\nTemplate: ${r.name}` +
-  //   (r.short ? '\n\n⚠ Some template ships are short; sending what is available.' : ''), r.ships)) return;
-
   setStatusText(status, `Surveying ${target.name}…`);
   const res = await browser.runtime.sendMessage({
     type: 'SEND_SURVEY', sourcePlanetId: planetId, targetSystemId: target.id, ships: r.ships,
@@ -759,15 +777,9 @@ function tickTimers() {
 async function investigate(report) {
   const status = document.getElementById('sc-progress');
   const planetId = Number(document.getElementById('sc-planet').value);
-  const planet = scPlanets.find(p => p.id === planetId);
 
   const r = await templateShips(document.getElementById('sc-inv-template').value, planetId);
   if (r.error) { setStatusText(status, r.error); return; }
-  // Confirmation Dialog disabled for now, since the template ships are already capped to the source planet's stock. The user can still cancel by switching templates or planets before clicking "Launch Investigation".
-  //
-  // if (!await confirmDialog(`Investigate ${report.systemName} (${report.eventTitle || report.eventType})?\n\n` +
-  //   `From: ${planet ? planet.name : planetId}\nTemplate: ${r.name}` +
-  //   (r.short ? '\n\n⚠ Some template ships are short; sending what is available.' : ''), r.ships)) return;
 
   setStatusText(status, `Investigating ${report.systemName}…`);
   const res = await browser.runtime.sendMessage({
@@ -1303,7 +1315,6 @@ async function computeSalvageFuel() {
 async function collectSalvage(salvage) {
   const status = document.getElementById('sc-progress');
   const planetId = Number(document.getElementById('sc-planet').value);
-  const planet = scPlanets.find(p => p.id === planetId);
 
   const cargo = selectedCargo();
   const plan = planFleet(salvage.total, cargo);
@@ -1312,19 +1323,10 @@ async function collectSalvage(salvage) {
   // Cap to what the source planet has; warn if that can't carry it all.
   const av = await browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId });
   if (av.error) { setStatusText(status, `Error: ${av.error}`); return; }
-  const capOf = id => (scCargoShips.find(s => s.shipDefId === id) || {}).cap || 0;
   const ships = plan
     .map(s => ({ shipDefId: s.shipDefId, quantity: Math.min(s.quantity, av.available[s.shipDefId] || 0) }))
     .filter(s => s.quantity > 0);
   if (!ships.length) { setStatusText(status, 'None of the selected cargo ships are on this planet.'); return; }
-  const carried = ships.reduce((sum, s) => sum + s.quantity * capOf(s.shipDefId), 0);
-  const short = carried < salvage.total;
-
-  // Confirmation Dialog disabled for now, since the template ships are already capped to the source planet's stock. The user can still cancel by switching templates or planets before clicking "Collect Salvage".
-  //
-  // if (!await confirmDialog(`Collect salvage at ${salvage.system} (${salvage.total.toLocaleString()} cargo)?\n\n` +
-  //   `From: ${planet ? planet.name : planetId}` +
-  //   (short ? `\n\n⚠ Selected ships on this planet only carry ${carried.toLocaleString()} — collecting what fits.` : ''), ships)) return;
 
   setStatusText(status, `Collecting salvage at ${salvage.system}…`);
   const res = await browser.runtime.sendMessage({

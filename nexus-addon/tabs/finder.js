@@ -1,5 +1,7 @@
 // Planet Finder tab: galaxy map, filters, scan loop.
 
+import { setStatusText } from '../common.js';
+
 // ── Planet Finder tab ──────────────────────────────────────────────────────
 
 export const SCAN_CACHE_TTL = 24 * 3600 * 1000;   // planets rarely change
@@ -11,6 +13,24 @@ export let galaxySystems = null;     // full /api/galaxy/map systems array
 export let finderArms = null;
 
 export let finderInited = false;
+
+export function resetFinderTab() {
+  finderInited = false;
+  galaxySystems = null;
+  finderArms = null;
+  finderHits = [];
+  hitSystems = {};
+  mapBounds = null;
+  homeSys = null;
+  myPlanets = [];
+  myUserId = null;
+  myOwnedSystems = new Set();
+  myAllianceTag = null;
+  allianceMemberIds = new Set();
+  allianceSystems = {};
+  galaxyHubs = [];
+  selectedSystemId = null;
+}
 
 export let finderRunning = false;
 
@@ -111,6 +131,13 @@ export async function initFinderTab() {
     o.value = z; o.textContent = z;
     zsel.appendChild(o);
   }
+
+  browser.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.nexus_active_server) {
+      resetFinderTab();
+      void initFinderTab();
+    }
+  });
 
   setStatusText(status, `${galaxySystems.length} systems loaded.`);
   drawGalaxyMap();

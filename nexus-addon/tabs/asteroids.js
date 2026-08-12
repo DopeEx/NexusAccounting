@@ -52,6 +52,23 @@ let afRunning = false;
 let afSort = { key: 'distance', dir: 1 };
 let afPage = 1;
 const AF_PER_PAGE = 25;
+
+export function resetAsteroidsTab() {
+  afInited = false;
+  afPlanets = [];
+  afRefMS = null;
+  afFields = [];
+  afRunning = false;
+  afPage = 1;
+  afTemplates = [];
+  afMap = null;
+  Object.keys(sectorSystems).forEach(k => delete sectorSystems[k]);
+  afAllShips = [];
+  if (afAvailTimer) clearInterval(afAvailTimer);
+  afAvailTimer = null;
+  afMyUsername = null;
+  afMiningFieldIds = new Set();
+}
 const MINING_DURATION = 600;   // seconds; fixed for asteroid mining missions
 const ASTEROID_CACHE_TTL = 15 * 60 * 1000;   // fields drain fast — refetch after 15 min
 let afTemplates = [];        // fleet templates, managed in the Fleets tab
