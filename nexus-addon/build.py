@@ -21,6 +21,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
+ARTIFACT_BASENAME = 'nexus-accounting-dopeex'
 
 FILES = [
     'manifest.json',
@@ -49,8 +50,8 @@ def build(version):
     import zipfile
     targets = []
     for ext in ('xpi', 'zip'):
-        target = os.path.join(ROOT, f'nexus-accounting-{version}.{ext}')
-        for old in glob.glob(os.path.join(ROOT, f'nexus-accounting-*.{ext}')):
+        target = os.path.join(ROOT, f'{ARTIFACT_BASENAME}-{version}.{ext}')
+        for old in glob.glob(os.path.join(ROOT, f'{ARTIFACT_BASENAME}-*.{ext}')):
             if old != target:
                 os.remove(old)
                 print(f'removed {os.path.basename(old)}')
@@ -119,7 +120,7 @@ def publish_chrome(version):
     if missing:
         sys.exit('Missing ' + ', '.join(missing) + ' (env or ../.env).')
 
-    zip_path = os.path.join(ROOT, f'nexus-accounting-{version}.zip')
+    zip_path = os.path.join(ROOT, f'{ARTIFACT_BASENAME}-{version}.zip')
     if not os.path.exists(zip_path):
         build(version)
 
