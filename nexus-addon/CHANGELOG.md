@@ -4,6 +4,41 @@ All notable changes to the Nexus Accounting Firefox addon.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.8.0] - 2026-08-12
+
+### Added
+- **Multi-server support (NX-S0 / NX-NF)**: full server-aware operation with isolated storage scopes per server.
+- **Test workflow**: a root-level `check` script now runs lint plus the full test suite in one step.
+- **Market trade history**: the Market tab now includes profit statistics, resource-flow summaries, history filtering, and per-trade net value calculations.
+- **Shared status helper**: status rendering across the dashboard and feature tabs is now centralized through a common helper.
+- **Server-scoped storage**: storage is now isolated per Nexus server, with migration and regression coverage for the new storage model.
+- **Game request bridge**: game-tab API requests now route through the session bridge so background requests stay aligned with the active game tab.
+- **Simulator wiring**: simulator status/shared helper wiring is now aligned with the rest of the addon.
+
+### Changed
+- **Repository metadata**: the root package metadata now uses the current fork name and URLs, with browser-neutral wording instead of Firefox-only wording.
+- **Versioning**: the addon manifest and addon package metadata now both report `1.8.0`.
+- **Linting setup**: ESLint now understands the addon’s CSS and HTML files with dedicated parsers/configs, so lint covers the full project without parser clashes.
+- **Fork identity**: the root package name now uses a fork-specific identifier to avoid confusion with the upstream repo.
+- **Server context handling**: active-server detection and selection are now enforced consistently across scrape, dashboard, and game-request flows.
+- **Dashboard/server flow**: the dashboard now tracks the selected server more consistently, including server-switch handling and status updates.
+- **Tab behavior**: asteroid-related tab state is reset more cleanly when the active server changes.
+- **Simulator page wiring**: simulator page plumbing was updated together with the shared status helper work.
+
+### Fixed
+- **Chrome MV3 warning**: removed the legacy `background.scripts` entry from the manifest so the extension uses the MV3 `service_worker` path only.
+- **HTML/CSS lint noise**: adjusted the lint config so CSS/HTML files are checked with the right rules and do not trigger JavaScript parser errors.
+- **Test warning cleanup**: removed an unused variable from the server-storage regression test.
+- **Backup/import compatibility**: backup and restore now preserve multi-server storage correctly.
+- **Selected-server enforcement**: scrape and dashboard actions now continue to honor the chosen server instead of falling back to the wrong context.
+- **Simulated helper cleanup**: simulator and status rendering imports were corrected where needed.
+
+### Removed
+- Legacy `background.scripts` manifest entry.
+
+### Chore
+- **Dependency metadata**: package-lock and repository metadata were refreshed as part of the fork maintenance updates.
+
 ## [1.7.6] - 2026-07-22
 
 ### Fixed

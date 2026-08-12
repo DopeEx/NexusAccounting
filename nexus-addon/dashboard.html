@@ -7,14 +7,15 @@
 </head>
 <body>
   <h1>Nexus Accounting</h1>
+  <button id="expert-toggle" type="button" aria-label="Toggle expert mode"></button>
 
   <nav class="tabs">
     <button class="tab main-tab active" data-tab="statistics">Statistics</button>
-    <button class="tab main-tab" data-tab="scouting">Scouting</button>
+    <button class="tab main-tab expert-only" data-tab="scouting">Scouting</button>
     <button class="tab main-tab" data-tab="asteroids">Asteroids Fields</button>
     <button class="tab main-tab" data-tab="expeditions">Expeditions</button>
     <button class="tab main-tab" data-tab="xeno">Xeno</button>
-    <button class="tab main-tab" data-tab="fleets">Fleet Templates</button>
+    <button class="tab main-tab expert-only" data-tab="fleets">Fleet Templates</button>
     <button class="tab main-tab" data-tab="finder">Galaxy Scout</button>
     <button class="tab main-tab" data-tab="market">Market</button>
     <button class="tab main-tab" data-tab="techtree">Tech Tree</button>
@@ -376,37 +377,39 @@
   </div>
 
   <div id="expeditions-content" style="display:none;">
-    <div class="finder-controls">
-      <label>Launch From
-        <select id="e-launch-planet"></select>
-      </label>
-      <label>Preset
-        <select id="e-launch-preset">
-          <option value="custom">Custom (fleet template)</option>
-          <option value="balanced">Balanced (Rift)</option>
-          <option value="loot_run">Loot Run (Dead)</option>
-          <option value="combat_rift">Combat Rift (Rift)</option>
-          <option value="deep_dead_dive">Deep Dead Dive (Dead)</option>
-          <option value="lean_dead_run">Lean Dead Run (Dead)</option>
-        </select>
-      </label>
-      <label id="e-launch-template-row">Fleet template
-        <select id="e-launch-template"></select>
-      </label>
-      <label>Zone
-        <select id="e-launch-zone">
-          <option value="dead">Dead</option>
-          <option value="rift">Rift</option>
-        </select>
-      </label>
-      <label>Depth
-        <input id="e-launch-depth" type="number" min="1" max="5" value="1" style="width:56px;">
-      </label>
-      <button id="e-launch-btn">Launch Expedition</button>
-      <span id="e-launch-status" style="color:#8b949e; font-size:0.8rem;"></span>
-      <span id="e-launch-active" style="margin-left:auto; color:#8b949e; font-size:0.8rem;" title="Max 2 expeditions in flight at once"></span>
+    <div class="expert-only">
+      <div class="finder-controls">
+        <label>Launch From
+          <select id="e-launch-planet"></select>
+        </label>
+        <label>Preset
+          <select id="e-launch-preset">
+            <option value="custom">Custom (fleet template)</option>
+            <option value="balanced">Balanced (Rift)</option>
+            <option value="loot_run">Loot Run (Dead)</option>
+            <option value="combat_rift">Combat Rift (Rift)</option>
+            <option value="deep_dead_dive">Deep Dead Dive (Dead)</option>
+            <option value="lean_dead_run">Lean Dead Run (Dead)</option>
+          </select>
+        </label>
+        <label id="e-launch-template-row">Fleet template
+          <select id="e-launch-template"></select>
+        </label>
+        <label>Zone
+          <select id="e-launch-zone">
+            <option value="dead">Dead</option>
+            <option value="rift">Rift</option>
+          </select>
+        </label>
+        <label>Depth
+          <input id="e-launch-depth" type="number" min="1" max="5" value="1" style="width:56px;">
+        </label>
+        <button id="e-launch-btn">Launch Expedition</button>
+        <span id="e-launch-status" style="color:#8b949e; font-size:0.8rem;"></span>
+        <span id="e-launch-active" style="margin-left:auto; color:#8b949e; font-size:0.8rem;" title="Max 2 expeditions in flight at once"></span>
+      </div>
+      <div id="e-launch-avail" style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; color:#8b949e; font-size:0.85rem; margin-bottom:8px;"></div>
     </div>
-    <div id="e-launch-avail" style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; color:#8b949e; font-size:0.85rem; margin-bottom:8px;"></div>
 
     <div class="reports-section">
       <div class="reports-header">
@@ -681,7 +684,7 @@
       <span id="ls-status" style="color:#8b949e; font-size:0.8rem;"></span>
     </div>
 
-    <div class="finder-controls" id="af-template" style="margin-top:0;">
+    <div class="finder-controls expert-only" id="af-template" style="margin-top:0;">
       <label>Fleet template
         <select id="af-template-select"></select>
       </label>
@@ -758,7 +761,7 @@
         <span>Automate Scouting</span>
         <span id="sc-auto-status" style="margin-left:8px; font-size:0.75rem; color:#8b949e;">Status: -</span>
       </div>
-      </br>
+      <br>
     </div>
       <div id="sc-transit-list" style="display:flex; flex-direction:column; gap:10px;"></div>
     </div>
@@ -778,7 +781,7 @@
         <span style="user-select:none;">Automate Investigation</span>
         <span id="sc-investigate-status" style="margin-left:8px; font-size:0.75rem; color:#8b949e;">Status: -</span>
       </div>
-    </br>
+    <br>
     </div>
       <div id="sc-inv-avail" style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; color:#8b949e; font-size:0.85rem; margin-bottom:8px;"></div>
       <table>
@@ -851,7 +854,7 @@
         <span>Automate Salvage Collection</span>
         <span id="sc-salvage-status" style="margin-left:8px; font-size:0.75rem; color:#8b949e;">Status: -</span>
       </div>
-    </br>
+    <br>
     </div>
       <table>
         <thead id="sc-salvage-head">
@@ -874,21 +877,23 @@
   </div>
 
   <div id="xeno-content" style="display:none;">
-    <div class="finder-controls">
-      <label>Survey From
-        <select id="xn-planet"></select>
-      </label>
-      <label>Fleet template
-        <select id="xn-template"></select>
-      </label>
-      <button id="xn-scan">Launch Ruins Survey</button>
-      <span id="xn-progress" style="color:#8b949e; font-size:0.8rem;"></span>
-      <span id="xn-slots" style="margin-left:auto; color:#8b949e; font-size:0.8rem;" title="Fleet slots in use"></span>
-    </div>
-    <div id="xn-avail" style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; color:#8b949e; font-size:0.85rem; margin-bottom:8px;"></div>
-    <div style="color:#8b949e; font-size:0.8rem; margin-bottom:8px;">
-      Finds the nearest system with an unowned Ancient moon not already targeted by an in-flight ruins survey,
-      then launches one there with the selected fleet template.
+    <div class="expert-only">
+      <div class="finder-controls">
+        <label>Survey From
+          <select id="xn-planet"></select>
+        </label>
+        <label>Fleet template
+          <select id="xn-template"></select>
+        </label>
+        <button id="xn-scan">Launch Ruins Survey</button>
+        <span id="xn-progress" style="color:#8b949e; font-size:0.8rem;"></span>
+        <span id="xn-slots" style="margin-left:auto; color:#8b949e; font-size:0.8rem;" title="Fleet slots in use"></span>
+      </div>
+      <div id="xn-avail" style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; color:#8b949e; font-size:0.85rem; margin-bottom:8px;"></div>
+      <div style="color:#8b949e; font-size:0.8rem; margin-bottom:8px;">
+        Finds the nearest system with an unowned Ancient moon not already targeted by an in-flight ruins survey,
+        then launches one there with the selected fleet template.
+      </div>
     </div>
 
     <div class="reports-section">

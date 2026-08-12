@@ -1,12 +1,18 @@
 import js from '@eslint/js';
 import globals from 'globals';
+import css from '@eslint/css';
+import html from '@html-eslint/eslint-plugin';
+
+const coreJsRulesOff = Object.fromEntries(
+  Object.keys(js.configs.recommended.rules).map(rule => [rule, 'off'])
+);
 
 export default [
   js.configs.recommended,
   {
-    // Addon source: ES modules with explicit imports. `browser` comes from the
-    // webextension polyfill / native API; `Chart` from chart.umd.js (a classic
-    // <script> loaded before the module entry on the dashboard page).
+    rules: { 'no-unused-vars': 'warn' }
+  },
+  {
     files: ['nexus-addon/**/*.js'],
     languageOptions: {
       ecmaVersion: 'latest',
@@ -16,8 +22,32 @@ export default [
   },
   {
     files: ['tests/**/*.js', 'eslint.config.js'],
-    languageOptions: { ecmaVersion: 'latest', sourceType: 'module', globals: { ...globals.node } },
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: { ...globals.node }
+    },
   },
-  { rules: { 'no-unused-vars': 'warn' } },
-  { ignores: ['nexus-addon/chart.umd.js', 'nexus-addon/browser-polyfill.js'] },
+  {
+    files: ['nexus-addon/**/*.css'],
+    plugins: { css },
+    language: 'css/css',
+    rules: {
+      ...coreJsRulesOff,
+      'css/no-duplicate-imports': 'error',
+      'css/no-empty-blocks': 'warn',
+    },
+  },
+  {
+    files: ['nexus-addon/**/*.html'],
+    ...html.configs['flat/recommended'],
+    rules: {
+      ...coreJsRulesOff,
+      '@html-eslint/require-doctype': 'error',
+      '@html-eslint/no-duplicate-attrs': 'error',
+    },
+  },
+  {
+    ignores: ['nexus-addon/chart.umd.js', 'nexus-addon/browser-polyfill.js']
+  },
 ];

@@ -192,6 +192,68 @@ export const TAB_CONTENT = {
   simulator: 'simulator-content',
 };
 
+const EXPERT_MODE_KEY = 'expert_mode_enabled';
+const EXPERT_TABS = new Set(['scouting', 'fleets']);
+const HIDE_GLOBAL_CONTROLS_TABS = new Set([
+  'finder', 'asteroids', 'fleets', 'scouting', 'techtree', 'market', 'battles', 'simulator',
+]);
+let expertModeEnabled = false;
+
+function isExpertTab(tab) {
+  return EXPERT_TABS.has(tab);
+}
+
+function syncVisibleTabContent() {
+  for (const [tabName, id] of Object.entries(TAB_CONTENT)) {
+    document.getElementById(id).style.display = tabName === activeTab ? '' : 'none';
+  }
+}
+
+function enforceAllowedTab() {
+  if (!expertModeEnabled && (isExpertTab(activeTab) || isExpertTab(activeMainTab))) {
+    setActiveTab('global');
+    activeMainTab = 'statistics';
+  }
+}
+
+function applyExpertModeVisibility() {
+  document.body.classList.toggle('expert-mode', expertModeEnabled);
+  enforceAllowedTab();
+  updateTabNavigation();
+  syncVisibleTabContent();
+  updateGlobalControlsVisibility();
+}
+
+function updateGlobalControlsVisibility() {
+  // View mode and records cap are meaningless on these tabs.
+  document.getElementById('global-controls').style.display = HIDE_GLOBAL_CONTROLS_TABS.has(activeTab) ? 'none' : '';
+}
+
+function openHashTab() {
+  if (!location.hash) return;
+  const hashTab = location.hash.slice(1);
+  if (!isExpertTab(hashTab) || expertModeEnabled) {
+    document.querySelector(`.tab[data-tab="${hashTab}"]`)?.click();
+  }
+}
+
+async function initExpertModeToggle() {
+  const toggle = document.getElementById('expert-toggle');
+  if (!toggle) return;
+  const got = await browser.storage.local.get(EXPERT_MODE_KEY);
+  expertModeEnabled = got[EXPERT_MODE_KEY] === true;
+  toggle.setAttribute('aria-pressed', expertModeEnabled ? 'true' : 'false');
+  applyExpertModeVisibility();
+  toggle.addEventListener('click', async () => {
+    expertModeEnabled = !expertModeEnabled;
+    toggle.setAttribute('aria-pressed', expertModeEnabled ? 'true' : 'false');
+    await browser.storage.local.set({ [EXPERT_MODE_KEY]: expertModeEnabled });
+    applyExpertModeVisibility();
+    positionControls();
+    renderAll();
+  });
+}
+
 const SUBTAB_TABS = ['global', 'surveys', 'pirates', 'mining', 'battles', 'debris', 'wormholes'];
 let activeMainTab = (activeTab === 'global' || SUBTAB_TABS.includes(activeTab)) ? 'statistics' : activeTab;
 
@@ -210,6 +272,7 @@ function updateTabNavigation() {
 document.querySelectorAll('.tab').forEach(btn => {
   btn.addEventListener('click', () => {
     const tab = btn.dataset.tab;
+    if (!expertModeEnabled && isExpertTab(tab)) return;
     if (SUBTAB_TABS.includes(tab)) {
       setActiveTab(tab);
       activeMainTab = 'statistics';
@@ -220,25 +283,16 @@ document.querySelectorAll('.tab').forEach(btn => {
       setActiveTab(tab);
       activeMainTab = tab;
     }
+    enforceAllowedTab();
     updateTabNavigation();
-    for (const [tabName, id] of Object.entries(TAB_CONTENT)) {
-      document.getElementById(id).style.display = tabName === activeTab ? '' : 'none';
-    }
-    // View mode and records cap are meaningless on the finder and debris tabs.
-    document.getElementById('global-controls').style.display =
-      (activeTab === 'finder' || activeTab === 'asteroids' || activeTab === 'fleets' || activeTab === 'scouting' || activeTab === 'techtree' || activeTab === 'market' || activeTab === 'battles' || activeTab === 'simulator') ? 'none' : '';
+    syncVisibleTabContent();
+    updateGlobalControlsVisibility();
     positionControls();
     renderAll();
   });
 });
 
 updateTabNavigation();
-
-// Open directly on a tab when linked with a hash, e.g. dashboard.html#asteroids
-// (used by the live-search results window).
-if (location.hash) {
-  document.querySelector(`.tab[data-tab="${location.hash.slice(1)}"]`)?.click();
-}
 
 // Keep the View/Window/Zone bar directly above the active tab's graphs.
 export function positionControls() {
@@ -509,7 +563,12 @@ async function maybeWarnStorage() {
 }
 
 positionControls();
-loadAll().then(maybeWarnStorage);
+initExpertModeToggle()
+  .then(() => loadAll())
+  .then(() => {
+    openHashTab();
+    return maybeWarnStorage();
+  });
 maybeShowWhatsNew();
 
 // Show the latest changelog section once after an update (flag set by the

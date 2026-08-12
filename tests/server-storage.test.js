@@ -19,6 +19,13 @@ test('manifest requests tabs permission for active-game detection', () => {
   assert.ok(manifest.permissions.includes('tabs'), 'manifest includes tabs permission for active game tab detection');
 });
 
+test('manifest uses MV3 service worker background without legacy scripts key', () => {
+  const manifest = JSON.parse(fs.readFileSync(new URL('../nexus-addon/manifest.json', import.meta.url), 'utf8'));
+  assert.equal(manifest.manifest_version, 3, 'manifest version is MV3');
+  assert.equal(manifest.background?.service_worker, 'background-sw.js', 'service worker is configured');
+  assert.equal(Object.hasOwn(manifest.background || {}, 'scripts'), false, 'legacy background.scripts key is absent');
+});
+
 test('server storage isolates NX-S0 from NX-NF', async () => {
   const store = makeBrowserStub();
 
@@ -207,7 +214,6 @@ test('server-aware backup snapshots include all scoped storage for import/export
   assert.equal(snapshot['nexus_server:nf:foo'], 'nf-value');
   assert.deepEqual(snapshot['nexus_server:nf:nested'], { ok: true });
 
-  const clone = { ...snapshot };
   await globalThis.nexusStorage.restoreFullStorage({
     nexus_active_server: 's0',
     'nexus_server:s0:foo': 'restored-s0',
