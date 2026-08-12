@@ -71,26 +71,24 @@ test('background requests honor the active NX-NF server when no explicit selecti
   await uniqueImport('../nexus-addon/server-storage.js');
   await uniqueImport('../nexus-addon/background.js');
 
-  const seen = [];
-  global.fetch = async (url) => {
-    seen.push(url);
-    return {
-      ok: true,
-      headers: new Headers(),
-      status: 200,
-      json: async () => ({ planets: [] }),
-      text: async () => '[]',
-    };
+  const queries = [];
+  const messages = [];
+  global.browser.tabs.query = async (query) => {
+    queries.push(query);
+    return [{ id: 7, url: 'https://nf.nexuslegacy.space/', active: true }];
   };
-  global.browser.tabs.query = async () => [{ id: 7, url: 'https://nf.nexuslegacy.space/', active: true }];
-  global.browser.cookies.get = async () => ({ value: 'token-123' });
-  global.browser.tabs.sendMessage = async () => ({ ok: true, data: {} });
+  global.browser.tabs.sendMessage = async (_tabId, payload) => {
+    messages.push(payload);
+    return { ok: true, data: { planets: [] } };
+  };
 
   const listener = global.browser.runtime.onMessage.listeners[0];
   assert.ok(listener, 'background message listener registered');
   await listener({ type: 'GET_PLANETS' }, {}, () => {});
 
-  assert.equal(seen[0], 'https://nf.nexuslegacy.space/api/planets');
+  assert.equal(queries.at(-1).url, 'https://nf.nexuslegacy.space/*');
+  assert.equal(messages[0].type, 'GAME_FETCH');
+  assert.equal(messages[0].path, '/api/planets');
   assert.equal((await globalThis.nexusStorage.getActiveServer()).key, 'nf');
 });
 

@@ -163,30 +163,33 @@ inject();
 new MutationObserver(() => inject())
   .observe(document.documentElement, { childList: true, subtree: true });
 
-// Run game API writes from the page origin (same-origin + cookies), so they are
-// identical to the game's own requests. The background routes the mine call here
-// because a Bearer request from the extension is rejected by the server (500).
+// Run game API requests from the page origin so the browser attaches the same
+// HttpOnly session cookie as the game's own client. The extension never reads or
+// forwards the cookie value itself.
 rt.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type !== 'GAME_FETCH') return;
   fetch(msg.path, {
     method: msg.method || 'POST',
     credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(msg.token ? { Authorization: `Bearer ${msg.token}` } : {}),
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: msg.body != null ? JSON.stringify(msg.body) : undefined,
   }).then(async r => {
     const text = await r.text();
+    const meta = {
+      status: r.status,
+      retryAfter: r.headers.get('Retry-After'),
+      rateLimitRemaining: r.headers.get('RateLimit-Remaining'),
+      rateLimitReset: r.headers.get('RateLimit-Reset'),
+    };
     if (!r.ok) {
       let m = `${r.status}`;
       try { const j = JSON.parse(text); m = j.message || j.error || m; }
       catch { if (text) m = `${r.status}: ${text.slice(0, 200)}`; }
-      sendResponse({ error: m, status: r.status, retryAfter: r.headers.get('Retry-After') });
+      sendResponse({ error: m, ...meta });
     } else {
       let data = {};
       try { data = JSON.parse(text); } catch { /* empty/non-JSON ok */ }
-      sendResponse({ ok: true, data });
+      sendResponse({ ok: true, data, ...meta });
     }
   }).catch(e => sendResponse({ error: e.message }));
   return true;   // keep the channel open for the async sendResponse
