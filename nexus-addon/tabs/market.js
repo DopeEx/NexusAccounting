@@ -5,9 +5,9 @@
 // so "buy" filters on offerResource and "sell" on requestResource. Ratio is
 // received-per-given (offerAmount / requestAmount) — higher is a better deal.
 
-import { applySort, attachSortable, fmt, setStatusText } from '../common.js';
+import { applySort, attachSortable, fmt, makeStatCard, marketTradeNet, resourceWeight, setStatusText } from '../common.js';
 
-const ICON_BASE = 'https://s0.nexuslegacy.space/images/resources/';
+let iconBase = 'https://s0.nexuslegacy.space/images/resources/';
 // All tradable resources, always shown as filter icons (basic first, then exotic).
 const RESOURCES = ['ore', 'silicates', 'hydrogen', 'alloys', 'cryo_ice',
   'quantum_dust', 'plasma_core', 'bio_extract', 'dark_matter', 'antimatter'];
@@ -48,37 +48,230 @@ export const marketSort = { key: 'rate', dir: 1 };   // cheapest cost-per-unit f
 const res = s => String(s || '').replace(/_/g, ' ');
 
 let source = 'market';   // 'market' | 'alliance'
+let history = [];
+let historyUserId = null;
+let historyPage = 1;
+let historyHubNames = {};
+const HISTORY_PER_PAGE = 20;
+
+function byId(id) {
+  return document.getElementById(id);
+}
+
+function on(id, type, handler) {
+  const el = byId(id);
+  if (!el) return;
+  el.addEventListener(type, handler);
+}
 
 attachSortable('m-head', marketSort, () => renderMarket());
-document.getElementById('m-refresh').addEventListener('click', () => loadOrders());
-document.getElementById('m-clear').addEventListener('click', () => {
+on('m-refresh', 'click', () => loadOrders());
+on('m-clear', 'click', () => {
   buyFilter.clear(); sellFilter.clear();
-  document.getElementById('m-ratio-wanted').value = '';
+  const ratioInput = byId('m-ratio-wanted');
+  if (ratioInput) ratioInput.value = '';
   drawIcons('m-buy'); drawIcons('m-sell');
   renderMarket();
 });
-document.getElementById('m-ratio-wanted').addEventListener('input', () => renderMarket());
-document.getElementById('m-source').addEventListener('change', e => {
+on('m-ratio-wanted', 'input', () => renderMarket());
+on('m-source', 'change', e => {
   source = e.target.checked ? 'alliance' : 'market';
   loadOrders();
+});
+on('m-history-refresh', 'click', () => loadHistory());
+on('m-history-range', 'change', () => {
+  historyPage = 1;
+  renderHistory();
+});
+on('m-history-prev', 'click', () => {
+  if (historyPage > 1) {
+    historyPage--;
+    renderHistory();
+  }
+});
+on('m-history-next', 'click', () => {
+  const pages = Math.max(1, Math.ceil(filteredHistory().length / HISTORY_PER_PAGE));
+  if (historyPage < pages) {
+    historyPage++;
+    renderHistory();
+  }
 });
 
 export async function initMarketTab() {
   if (inited) return;
   inited = true;
+  try {
+    const server = await globalThis.nexusStorage.getActiveServer();
+    if (server?.origin) iconBase = `${server.origin}/images/resources/`;
+  } catch {
+    // Keep the default icon host if server lookup is unavailable.
+  }
   // Alliance membership colours alliance sellers green; reused across sources.
   browser.runtime.sendMessage({ type: 'GET_ALLIANCE' }).then(a => {
     allianceMembers = new Set((a && !a.error && a.memberIds) || []);
     renderMarket();
   });
   loadOrders();
+  loadHistory();
+}
+
+function filteredHistory() {
+  const rangeEl = byId('m-history-range');
+  if (!rangeEl) return [];
+  const range = rangeEl.value;
+  if (range === 'all') return history;
+  const days = Number(range);
+  if (!days) return history;
+  const now = new Date();
+  const cutoff = days === 1
+    ? new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    : Date.now() - days * 86400000;
+  return history.filter(trade => new Date(trade.createdAt).getTime() >= cutoff);
+}
+
+async function loadHistory() {
+  const status = byId('m-history-progress');
+  if (!status || !byId('m-profit-stats') || !byId('m-resource-flows') || !byId('m-history-tbody')) {
+    return;
+  }
+  setStatusText(status, 'Loading history…');
+  const [data, me, hubs] = await Promise.all([
+    browser.runtime.sendMessage({ type: 'GET_MARKET_TRADES' }),
+    browser.runtime.sendMessage({ type: 'GET_AUTH_ME' }),
+    browser.runtime.sendMessage({ type: 'GET_HUBS' }),
+  ]);
+  if (data?.error) { setStatusText(status, `Error: ${data.error}`, 'error'); return; }
+  if (hubs?.error) { setStatusText(status, `Error: ${hubs.error}`, 'error'); return; }
+  if (me?.error || !me?.user) { setStatusText(status, `Error: ${me?.error || 'Unable to identify player.'}`, 'error'); return; }
+
+  historyUserId = me.user.id ?? me.user.userId;
+  if (historyUserId == null) {
+    setStatusText(status, 'Error: Player ID unavailable.', 'error');
+    return;
+  }
+
+  history = data.trades || [];
+  historyHubNames = Object.fromEntries((hubs.hubs || []).map(hub => [hub.id, hub.name]));
+  history.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  historyPage = 1;
+  setStatusText(status, `${history.length} trades`);
+  renderHistory();
+}
+
+function renderHistory() {
+  const stats = byId('m-profit-stats');
+  const flowBox = byId('m-resource-flows');
+  const pageInfo = byId('m-history-page');
+  const prev = byId('m-history-prev');
+  const next = byId('m-history-next');
+  const tbody = byId('m-history-tbody');
+  if (!stats || !flowBox || !pageInfo || !prev || !next || !tbody) return;
+
+  const list = filteredHistory();
+  const flow = {};
+  let profit = 0;
+  let fees = 0;
+  let bought = 0;
+  let sold = 0;
+
+  const normalized = list.map(trade => {
+    const net = marketTradeNet(trade, historyUserId);
+    flow[net.paidResource] = (flow[net.paidResource] || 0) - net.paid;
+    flow[net.receivedResource] = (flow[net.receivedResource] || 0) + net.received;
+    profit += net.oreEquivalent;
+    fees += net.fee * resourceWeight(net.receivedResource);
+    if (net.soldByMe) sold++; else bought++;
+    return { trade, net };
+  });
+
+  stats.textContent = '';
+  const profitCard = makeStatCard(
+    'Estimated profit (ore-equivalent)',
+    `${profit >= 0 ? '+' : ''}${fmt(Math.round(profit))}`,
+    '',
+    profit >= 0 ? 'color:#56d364' : 'color:#ff7b72',
+  );
+  profitCard.title = 'Each trade uses received amount after fee, then subtracts paid value. Transport fuel is not included.';
+  stats.append(
+    profitCard,
+    makeStatCard('Trades', fmt(list.length), 'missions'),
+    makeStatCard('Bought / Sold', `${fmt(bought)} / ${fmt(sold)}`, 'hydrogen'),
+    makeStatCard('Fees (already included)', fmt(Math.round(fees)), 'alloys'),
+  );
+
+  flowBox.textContent = '';
+  const flowEntries = Object.entries(flow)
+    .filter(([, value]) => value !== 0)
+    .sort((a, b) => Math.abs(b[1] * resourceWeight(b[0])) - Math.abs(a[1] * resourceWeight(a[0])));
+  if (!flowEntries.length) {
+    flowBox.textContent = 'No trades in this range.';
+    flowBox.style.color = '#484f58';
+  } else {
+    flowBox.style.color = '';
+    for (const [resource, value] of flowEntries) {
+      const chip = document.createElement('span');
+      chip.className = 'market-flow-chip';
+      const label = document.createElement('span');
+      label.textContent = res(resource);
+      const amount = document.createElement('strong');
+      amount.className = value >= 0 ? 'positive' : 'negative';
+      amount.textContent = `${value >= 0 ? '+' : ''}${fmt(value)}`;
+      chip.append(label, amount);
+      flowBox.appendChild(chip);
+    }
+  }
+
+  const pages = Math.max(1, Math.ceil(normalized.length / HISTORY_PER_PAGE));
+  historyPage = Math.min(Math.max(1, historyPage), pages);
+  pageInfo.textContent = `Page ${historyPage} / ${pages} (${normalized.length} trades)`;
+  prev.disabled = historyPage <= 1;
+  next.disabled = historyPage >= pages;
+
+  tbody.textContent = '';
+  const pageRows = normalized.slice((historyPage - 1) * HISTORY_PER_PAGE, historyPage * HISTORY_PER_PAGE);
+  if (!pageRows.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 7;
+    cell.className = 'zero';
+    cell.textContent = 'No trade records in this range.';
+    row.appendChild(cell);
+    tbody.appendChild(row);
+    return;
+  }
+
+  for (const { trade, net } of pageRows) {
+    const row = document.createElement('tr');
+    const fromHub = trade.hubName || historyHubNames[trade.hubId] || (trade.hubId != null ? `Hub ${trade.hubId}` : '—');
+    const toHub = trade.buyerHubName || historyHubNames[trade.buyerHubId] || '';
+    const hub = toHub && toHub !== fromHub ? `${fromHub} -> ${toHub}` : fromHub;
+    const values = [
+      new Date(trade.createdAt).toLocaleString(),
+      net.soldByMe ? 'Sold' : 'Bought',
+      `${fmt(net.paid)} ${res(net.paidResource)}`,
+      `${fmt(net.received)} ${res(net.receivedResource)}`,
+      net.fee ? `${fmt(net.fee)} ${res(net.receivedResource)}` : '—',
+      hub,
+      `${net.oreEquivalent >= 0 ? '+' : ''}${fmt(Math.round(net.oreEquivalent))}`,
+    ];
+    values.forEach((value, index) => {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      if (index === 1) cell.style.color = net.soldByMe ? '#e3b341' : '#79c0ff';
+      if (index === 6) cell.className = net.oreEquivalent >= 0 ? 'market-profit-positive' : 'market-profit-negative';
+      row.appendChild(cell);
+    });
+    tbody.appendChild(row);
+  }
 }
 
 async function loadOrders() {
   const alliance = source === 'alliance';
-  const status = document.getElementById('m-progress');
+  const status = byId('m-progress');
+  const hubCol = byId('m-hub-col');
+  if (!status || !hubCol) return;
   setStatusText(status, `Loading ${alliance ? 'alliance trade' : 'market'} orders…`);
-  document.getElementById('m-hub-col').textContent = alliance ? 'System' : 'Hub';
+  hubCol.textContent = alliance ? 'System' : 'Hub';
 
   const toOrder = (o, hub) => ({
     ...o, hub,
@@ -111,13 +304,14 @@ async function loadOrders() {
 // Clickable resource-icon toggles. Click an icon to filter by it, click the
 // selected one again to clear. Broken image URLs fall back to the alt text.
 function drawIcons(id) {
-  const box = document.getElementById(id);
+  const box = byId(id);
+  if (!box) return;
   box.textContent = '';
   const set = id === 'm-buy' ? buyFilter : sellFilter;
   for (const v of RESOURCES) {
     const img = document.createElement('img');
     img.className = 'res-icon' + (set.has(v) ? ' sel' : '');
-    img.src = `${ICON_BASE}${v}.webp`;
+    img.src = `${iconBase}${v}.webp`;
     img.alt = res(v);
     img.title = res(v);
     img.addEventListener('click', () => {
@@ -130,15 +324,18 @@ function drawIcons(id) {
 }
 
 export function renderMarket() {
-  const ratioWanted = parseFloat(document.getElementById('m-ratio-wanted').value);
+  const ratioEl = byId('m-ratio-wanted');
+  const tbody = byId('m-tbody');
+  const count = byId('m-count');
+  if (!ratioEl || !tbody || !count) return;
+  const ratioWanted = parseFloat(ratioEl.value);
   const rows = applySort('m-head', orders.filter(o =>
     (!buyFilter.size || buyFilter.has(o.offerResource)) &&
     (!sellFilter.size || sellFilter.has(o.requestResource)) &&
     (isNaN(ratioWanted) || o.ratio >= ratioWanted)), marketSort, 'id');
 
-  const tbody = document.getElementById('m-tbody');
   tbody.textContent = '';
-  document.getElementById('m-count').textContent = `${rows.length} orders`;
+  count.textContent = `${rows.length} orders`;
   if (!rows.length) {
     const tr = document.createElement('tr');
     const td = document.createElement('td');

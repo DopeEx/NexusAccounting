@@ -81,6 +81,7 @@ export function updateStatus(lastScrape, lastError) {
   }
   if (store.stats_drift) {
     const warn = appendStatusText(
+      el,
       '⚠ Stats drift detected — click "Rebuild stats".',
       'warning',
     );

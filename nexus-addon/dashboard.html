@@ -1004,6 +1004,56 @@
       <span id="m-progress" style="margin-left:12px; color:#8b949e; font-size:0.8rem;"></span>
     </div>
 
+    <section class="market-profit-panel">
+      <div class="reports-header">
+        <div>
+          <h2>Trade history and estimated profit</h2>
+          <p class="market-profit-note">Each trade subtracts the market fee from the received amount before valuation.</p>
+        </div>
+        <div class="market-profit-actions">
+          <label for="m-history-range">Range</label>
+          <select id="m-history-range">
+            <option value="all">All history</option>
+            <option value="30">Last 30 days</option>
+            <option value="7">Last 7 days</option>
+            <option value="1">Today</option>
+          </select>
+          <button id="m-history-refresh">Refresh history</button>
+          <span id="m-history-progress"></span>
+        </div>
+      </div>
+      <div id="m-profit-stats" class="stats"></div>
+      <div class="market-profit-note market-profit-formula">
+        Per trade: (received - fee) x received-resource weight - paid x paid-resource weight.<br>
+        Ore-equivalent weights: ore x1, silicates x2, hydrogen x3, alloys x5, other exotics x10.
+      </div>
+      <div class="market-flow-section">
+        <h3>Net resource flow</h3>
+        <div id="m-resource-flows" class="market-flow-grid"></div>
+      </div>
+      <div class="market-history-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Direction</th>
+              <th>Paid</th>
+              <th>Received (after fee)</th>
+              <th>Fee</th>
+              <th>Hub</th>
+              <th>Ore-equivalent net</th>
+            </tr>
+          </thead>
+          <tbody id="m-history-tbody"></tbody>
+        </table>
+      </div>
+      <div class="pagination market-history-pagination">
+        <button id="m-history-prev">← Prev</button>
+        <span id="m-history-page">Page 1 / 1</span>
+        <button id="m-history-next">Next →</button>
+      </div>
+    </section>
+
     <div class="reports-section">
       <div class="reports-header">
         <h2>Open offers</h2>

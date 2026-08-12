@@ -290,3 +290,34 @@ input.no-spin::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; 
 }
 .m-switch:checked { background: #1f6feb; }
 .m-switch:checked::before { transform: translateX(22px); }
+
+.market-profit-panel {
+  margin-top: 18px; padding: 16px; background: #111820;
+  border: 1px solid #30363d; border-radius: 10px;
+}
+.market-profit-panel .reports-header { align-items: flex-start; gap: 16px; }
+.market-profit-panel .reports-header h2 { color: #e6edf3; }
+.market-profit-note { margin-top: 5px; color: #8b949e; font-size: 0.75rem; line-height: 1.5; }
+.market-profit-formula { margin: 2px 0 14px; }
+.market-profit-actions { display: flex; align-items: center; gap: 8px; color: #8b949e; font-size: 0.8rem; }
+.market-profit-actions select,
+.market-profit-actions button {
+  background: #21262d; border: 1px solid #30363d; color: #e6edf3;
+  padding: 5px 10px; border-radius: 6px; font-size: 0.8rem;
+}
+#m-history-progress { color: #8b949e; min-width: 90px; }
+.market-flow-section h3 { margin-bottom: 8px; color: #8b949e; font-size: 0.9rem; }
+.market-flow-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.market-flow-chip {
+  display: inline-flex; gap: 7px; align-items: center; padding: 6px 9px;
+  border: 1px solid #30363d; border-radius: 6px; background: #161b22; font-size: 0.8rem;
+}
+.market-flow-chip strong.positive, .market-profit-positive { color: #56d364; }
+.market-flow-chip strong.negative, .market-profit-negative { color: #ff7b72; }
+.market-history-table-wrap { overflow-x: auto; }
+.market-history-pagination { justify-content: flex-end; margin-top: 12px; }
+
+@media (max-width: 900px) {
+  .market-profit-panel .reports-header { flex-direction: column; }
+  .market-profit-actions { flex-wrap: wrap; }
+}

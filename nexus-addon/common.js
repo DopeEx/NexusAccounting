@@ -842,6 +842,24 @@ export const RESOURCE_WEIGHTS = {
 };
 export const RARE_WEIGHT = 10;   // exotics with no specific weight above (ice, quantum dust, …)
 
+export function resourceWeight(key) {
+  return RESOURCE_WEIGHTS[key] || RARE_WEIGHT;
+}
+
+// Signed trade valuation from the current player's perspective.
+// Positive oreEquivalent means the received side outweighs what was paid.
+export function marketTradeNet(trade, userId) {
+  const soldByMe = String(trade.sellerId) === String(userId);
+  const fee = Math.max(0, Number(soldByMe ? trade.commissionSeller : trade.commissionBuyer) || 0);
+  const paidResource = soldByMe ? trade.resourceSold : trade.resourcePaid;
+  const receivedResource = soldByMe ? trade.resourcePaid : trade.resourceSold;
+  const paid = Math.max(0, Number(soldByMe ? trade.amountSold : trade.amountPaid) || 0);
+  const grossReceived = Math.max(0, Number(soldByMe ? trade.amountPaid : trade.amountSold) || 0);
+  const received = Math.max(0, grossReceived - fee);
+  const oreEquivalent = received * resourceWeight(receivedResource) - paid * resourceWeight(paidResource);
+  return { soldByMe, fee, paidResource, receivedResource, paid, received, oreEquivalent };
+}
+
 // Net gain cards: resources collected minus ship build costs, per resource
 // (raw), plus a weighted total (ore×1, silicates×2, hydrogen×3, alloys×5).
 // Rare resource losses are not in the total (no common valuation).
@@ -869,7 +887,7 @@ export function renderNetCards(containerId, collected, lost, periodLabel, fuelHy
     const spent = resourceVal(cost, key);
     if (!got && !spent) continue;
     const v = got - spent;
-    total += v * (RESOURCE_WEIGHTS[key] || RARE_WEIGHT);
+    total += v * resourceWeight(key);
     el.appendChild(makeStatCard(`${label} net${periodLabel}`, (v >= 0 ? '+' : '') + fmt(v), cls));
   }
   const totalCard = makeStatCard(`Total net${periodLabel}`, (total >= 0 ? '+' : '') + fmt(total),
