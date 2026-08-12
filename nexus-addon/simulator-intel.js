@@ -80,7 +80,7 @@ document.getElementById('btn-load-fleet').addEventListener('click', async functi
     const classFilter = document.getElementById('fleet-class').value;
     const res = await browser.runtime.sendMessage({ type: 'GET_FLEET', planetId });
     if (res.error) {
-      status.textContent = `Load fleet failed: ${res.error}`;
+      setStatusText(status, `Load fleet failed: ${res.error}`);
       return;
     }
     let total = 0;
@@ -96,7 +96,7 @@ document.getElementById('btn-load-fleet').addEventListener('click', async functi
     const typeLabel = classFilter
       ? document.getElementById('fleet-class').selectedOptions[0]?.textContent
       : 'all types';
-    status.textContent = `Loaded ${total} ships (${typeLabel}) from ${planetLabel}.`;
+    setStatusText(status, `Loaded ${total} ships (${typeLabel}) from ${planetLabel}.`);
     if (selOpt?.dataset.systemName) {
       document.getElementById('atk-system').value = selOpt.dataset.systemName;
       updateDistanceFromCoords();
@@ -112,7 +112,7 @@ async function fillTechLevels(side) {
   const status = document.getElementById('sim-status');
   const { research } = await browser.storage.local.get('research');
   if (!research?.length) {
-    status.textContent = 'No research data — open the game and click Scrape Now first.';
+    setStatusText(status, 'No research data — open the game and click Scrape Now first.');
     return;
   }
   const levels = {};
@@ -124,7 +124,7 @@ async function fillTechLevels(side) {
     if (lvl > 0) filled++;
   });
   updateFleetStats(side);
-  status.textContent = `Filled ${filled} research levels into ${side} tech.`;
+  setStatusText(status, `Filled ${filled} research levels into ${side} tech.`);
 }
 
 document.getElementById('btn-fill-tech-attacker').addEventListener('click', () => fillTechLevels('attacker'));

@@ -2,7 +2,7 @@
 // both kinds share one background store (exp_*), tagged per-record by `kind`.
 
 import { loadFleetTemplates } from './fleets.js';
-import { RESOURCE_SERIES, appendExtraResourceCards, applySort, attachSortable, clearAvailStrip, computeRawLossCost, computeSeries, editFleetDialog, fillResourceCards, filterZone, fmt, fuelForMode, getLabelKey, getMode, inWindowRange, makeMissionBar, makeResourceDoughnut, makeResourceLineChart, makeStatCard, periodLabelFor, renderAvailStrip, renderPagedTable, rememberSelection, rememberedSelections, store, windowActive, zeroCell, zoneCell } from '../common.js';
+import { RESOURCE_SERIES, appendExtraResourceCards, applySort, attachSortable, clearAvailStrip, computeRawLossCost, computeSeries, editFleetDialog, fillResourceCards, filterZone, fmt, fuelForMode, getLabelKey, getMode, inWindowRange, makeMissionBar, makeResourceDoughnut, makeResourceLineChart, makeStatCard, periodLabelFor, renderAvailStrip, renderPagedTable, rememberSelection, rememberedSelections, store, windowActive, zeroCell, zoneCell, setStatusText } from '../common.js';
 
 export let chartExpeditions, chartExpComp;
 
@@ -234,7 +234,7 @@ async function launchExpedition() {
   const depth = Math.min(depthMax, Math.max(depthMin, parseInt(document.getElementById('e-launch-depth').value, 10) || depthMin));
 
   const r = await resolveExpeditionShips(planetId);
-  if (r.error) { status.textContent = r.error; return; }
+  if (r.error) { setStatusText(status, r.error); return; }
 
   const ships = await editFleetDialog({
     title: 'Launch expedition',
@@ -243,12 +243,12 @@ async function launchExpedition() {
   });
   if (!ships || !ships.length) return;   // cancelled or emptied
 
-  status.textContent = 'Launching…';
+  setStatusText(status, 'Launching…');
   const res = await browser.runtime.sendMessage({
     type: 'SEND_EXPEDITION', sourcePlanetId: planetId, ships, zone, depth,
   });
-  if (res.error) { status.textContent = `Launch failed: ${res.error}`; return; }
-  status.textContent = 'Expedition launched ✓';
+  if (res.error) { setStatusText(status, `Launch failed: ${res.error}`); return; }
+  setStatusText(status, 'Expedition launched ✓');
   updateExpeditionAvail();
   refreshExpeditionMissions();
   setTimeout(refreshExpeditionMissions, 2000);   // retry for post-POST API lag

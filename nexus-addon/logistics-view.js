@@ -15,6 +15,21 @@ window.__nxLogisticsView = true;
 (function () {
 const ext = (typeof browser !== 'undefined' ? browser : chrome);
 const IMG = '/images/resources';
+function setStatusText(el, text, variant) {
+  if (!el) return;
+  el.textContent = '';
+  el.dataset.status = text || '';
+  el.dataset.variant = variant || '';
+  if (!variant) {
+    el.textContent = text;
+    return;
+  }
+  const span = document.createElement('span');
+  span.textContent = text;
+  if (variant === 'warning') span.style.color = '#e3b341';
+  else if (variant === 'error') span.style.color = '#ff7b72';
+  el.appendChild(span);
+}
 // Colony resource fields (camelCase, as the planet/outpost APIs return them) →
 // label + icon filename.
 // k = colony field (camelCase, as the APIs return it); cargo = dispatch cargo key
@@ -767,9 +782,9 @@ async function renderBuilder() {
       const need = getCargoNeed();
       if (need > est.totalCargoCapacity) {
         send.disabled = true;
-        status.innerHTML = `<span style="color:#ff7b72;">Cargo hold exceeds fleet capacity: ${fmt(need)} > ${fmt(est.totalCargoCapacity)}</span>`;
-      } else if (status.textContent.startsWith('Cargo hold exceeds')) {
-        status.textContent = '';
+        setStatusText(status, `Cargo hold exceeds fleet capacity: ${fmt(need)} > ${fmt(est.totalCargoCapacity)}`, 'error');
+      } else if (status.dataset.status.startsWith('Cargo hold exceeds')) {
+        setStatusText(status, '');
       }
     }
   }
@@ -801,9 +816,9 @@ async function renderBuilder() {
 
   send.onclick = async () => {
     if (!getShips().length) return;
-    send.disabled = true; status.textContent = 'Sending…';
+    send.disabled = true; setStatusText(status, 'Sending…');
     try { const s = sendSpec(); await jpost(s.path, s.body); builder = null; refresh(); }
-    catch (e) { status.innerHTML = `<span style="color:#ff7b72;">${e.message}</span>`; send.disabled = false; }
+    catch (e) { setStatusText(status, e.message, 'error'); send.disabled = false; }
   };
 
   const foot = document.createElement('div');

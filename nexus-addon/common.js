@@ -7,6 +7,33 @@ export function setStore(s) { store = s; }   // setter: other modules can't reas
 export let activeTab = 'global';
 export function setActiveTab(t) { activeTab = t; }
 
+export function setStatusText(el, text, variant) {
+  if (!el) return;
+  el.style.color = '';
+  el.textContent = '';
+  if (!variant) {
+    el.textContent = text;
+    return;
+  }
+  const span = document.createElement('span');
+  span.className = ['status-message', variant].filter(Boolean).join(' ');
+  span.textContent = text;
+  el.appendChild(span);
+}
+
+export function appendStatusText(el, text, variant) {
+  if (!el) return null;
+  el.style.color = '';
+  const span = document.createElement('span');
+  span.className = ['status-message', variant].filter(Boolean).join(' ');
+  span.textContent = text;
+  el.appendChild(span);
+  return span;
+}
+
+export const setStatusMessage = setStatusText;
+export const appendStatusMessage = appendStatusText;
+
 export const PER_PAGE = 20;
 
 // shipDefId → def ({ name, imageUrl, … }), fetched once and cached.

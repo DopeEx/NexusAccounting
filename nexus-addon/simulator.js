@@ -307,7 +307,7 @@ async function init() {
 
   const defs = Object.values(ships || {});
   if (!defs.length || defs.some(d => d.hp === undefined)) {
-    status.textContent = 'Ship combat stats missing — open the dashboard and click "Scrape Now" first.';
+    setStatusText(status, 'Ship combat stats missing — open the dashboard and click "Scrape Now" first.');
     status.className = 'error';
     return;
   }
@@ -321,7 +321,7 @@ async function init() {
   buildTechInputs('attacker-techs', 'attacker');
   buildTechInputs('defender-techs', 'defender');
   await Promise.all([loadIntelReports(), populatePlanetPicker()]);
-  status.textContent = `${defs.length} ship types loaded.`;
+  setStatusText(status, `${defs.length} ship types loaded.`);
 }
 
 document.getElementById('btn-run').addEventListener('click', async function() {
@@ -331,10 +331,10 @@ document.getElementById('btn-run').addEventListener('click', async function() {
   const hasDefense = ['def-missile','def-laser','def-railgun','def-plasma','def-ion','def-ew']
     .some(id => (parseInt(document.getElementById(id).value, 10) || 0) > 0);
   if (!Object.keys(attackerFleet).length || (!Object.keys(defenderFleet).length && !hasDefense)) {
-    status.textContent = 'Attacker needs ships; defender needs ships or a turret level.';
+    setStatusText(status, 'Attacker needs ships); defender needs ships or a turret level.';
     return;
   }
-  status.textContent = 'Simulating…';
+  setStatusText(status, 'Simulating…');
   await updateDistanceFromCoords();
   const distanceAU = _resolvedDistanceAU;
 
@@ -365,7 +365,7 @@ document.getElementById('btn-run').addEventListener('click', async function() {
     const result = runSimulations(attackerFleet, defenderFleet, opts);
     renderResults(result, opts);
     renderSampleBattle(attackerFleet, defenderFleet, opts);
-    status.textContent = `Done — ${opts.sims} simulations.`;
+    setStatusText(status, `Done — ${opts.sims} simulations.`);
     document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
   }, 10);
 });

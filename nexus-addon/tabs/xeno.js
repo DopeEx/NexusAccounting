@@ -14,7 +14,7 @@
 
 import { SCAN_CACHE_MAX, getSystemPlanets } from './finder.js';
 import { loadFleetTemplates } from './fleets.js';
-import { RESOURCE_SERIES, appendExtraResourceCards, applySort, attachSortable, clearAvailStrip, computeRawLossCost, computeSeries, confirmDialog, fillResourceCards, filterZone, fmt, fmtCountdown, fuelForMode, getLabelKey, getMode, inWindowRange, makeMissionBar, makeResourceDoughnut, makeResourceLineChart, makeStatCard, periodLabelFor, renderAvailStrip, renderPagedTable, rememberSelection, rememberedSelections, store, windowActive, zeroCell } from '../common.js';
+import { RESOURCE_SERIES, appendExtraResourceCards, applySort, attachSortable, clearAvailStrip, computeRawLossCost, computeSeries, confirmDialog, fillResourceCards, filterZone, fmt, fmtCountdown, fuelForMode, getLabelKey, getMode, inWindowRange, makeMissionBar, makeResourceDoughnut, makeResourceLineChart, makeStatCard, periodLabelFor, renderAvailStrip, renderPagedTable, rememberSelection, rememberedSelections, store, windowActive, zeroCell, setStatusText } from '../common.js';
 
 const XENO_CACHE_TTL = 24 * 3600 * 1000;   // moon ownership rarely changes
 const XENO_COOLDOWN_MS = 48 * 3600 * 1000; // local cooldown after we survey a moon
@@ -145,10 +145,10 @@ export async function initXenoTab() {
   if (inited) return;
   inited = true;
   const status = document.getElementById('xn-progress');
-  status.textContent = 'Loading…';
+  setStatusText(status, 'Loading…');
 
   const planets = await browser.runtime.sendMessage({ type: 'GET_PLANETS' });
-  if (planets.error) { status.textContent = `Error: ${planets.error}`; inited = false; return; }
+  if (planets.error) { setStatusText(status, `Error: ${planets.error}`); inited = false; return; }
   xnPlanets = (planets.planets || []).filter(p => p.systemId != null);
 
   const pSel = document.getElementById('xn-planet');
@@ -183,7 +183,7 @@ export async function initXenoTab() {
     renderCooldownTable();   // re-render each tick so "time left" counts down / expired rows drop
   }, 1000);
 
-  status.textContent = '';
+  setStatusText(status, '');
   updateAvail();
   refreshMissions();
   renderCooldownTable();
@@ -369,11 +369,11 @@ async function launchRuinsSurvey() {
   const planet = xnPlanets.find(p => p.id === planetId);
   if (!planet) return;
 
-  status.textContent = 'Loading galaxy map…';
+  setStatusText(status, 'Loading galaxy map…');
   let map;
-  try { map = await loadMap(); } catch (e) { status.textContent = `Error: ${e.message}`; return; }
+  try { map = await loadMap(); } catch (e) { setStatusText(status, `Error: ${e.message}`); return; }
   const src = map.byId[planet.systemId];
-  if (!src) { status.textContent = 'Source system not on the map.'; return; }
+  if (!src) { setStatusText(status, 'Source system not on the map.'); return; }
 
   const [mi, surveyedMoons] = await Promise.all([
     browser.runtime.sendMessage({ type: 'GET_MISSIONS' }),
@@ -386,30 +386,30 @@ async function launchRuinsSurvey() {
 
   xnRunning = true;
   btn.textContent = 'Stop';
-  status.textContent = 'Scanning for the nearest Ancient moon…';
+  setStatusText(status, 'Scanning for the nearest Ancient moon…');
   let found;
   try {
     found = await findNearestAncientMoon(src, planet.systemId, targetedMoonIds, surveyedMoons,
-      (scanned, total) => { status.textContent = `Scanning… ${scanned}/${total} systems.`; });
+      (scanned, total) => { setStatusText(status, `Scanning… ${scanned}/${total} systems.`); });
   } finally {
     xnRunning = false;
     btn.textContent = 'Launch Ruins Survey';
   }
-  if (!found) { status.textContent = 'No unclaimed Ancient moon found nearby.'; return; }
+  if (!found) { setStatusText(status, 'No unclaimed Ancient moon found nearby.'); return; }
 
   const r = await templateShips(document.getElementById('xn-template').value, planetId);
-  if (r.error) { status.textContent = r.error; return; }
+  if (r.error) { setStatusText(status, r.error); return; }
   const sysName = found.system.name || `#${found.system.id}`;
   if (!await confirmDialog(`Launch ruins survey?\n\nTarget: ${found.moon.name} (${sysName}, ${found.distance} away)\n` +
     `From: ${planet.name}\nTemplate: ${r.name}` +
     (r.short ? '\n\n⚠ Some template ships are short; sending what is available.' : ''), r.ships)) return;
 
-  status.textContent = `Launching survey to ${found.moon.name}…`;
+  setStatusText(status, `Launching survey to ${found.moon.name}…`);
   const res = await browser.runtime.sendMessage({
     type: 'SEND_XENO_SURVEY', sourcePlanetId: planetId, targetMoonId: found.moon.id, ships: r.ships,
   });
-  if (res.error) { status.textContent = `Launch failed: ${res.error}`; return; }
-  status.textContent = `Fleet sent to ${found.moon.name} ✓`;
+  if (res.error) { setStatusText(status, `Launch failed: ${res.error}`); return; }
+  setStatusText(status, `Fleet sent to ${found.moon.name} ✓`);
   updateAvail();
   refreshMissions();
 

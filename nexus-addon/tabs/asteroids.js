@@ -8,7 +8,7 @@
 
 import { SCAN_CACHE_MAX, getSystemPlanets } from './finder.js';
 import { loadFleetTemplates } from './fleets.js';
-import { clearAvailStrip, editFleetDialog, fuelEstimate, rememberSelection, rememberedSelections, renderAvailStrip } from '../common.js';
+import { clearAvailStrip, editFleetDialog, fuelEstimate, rememberSelection, rememberedSelections, renderAvailStrip, setStatusText } from '../common.js';
 
 const ICON_BASE = 'https://s0.nexuslegacy.space/images/resources/';
 // asteroid fieldType → resource icon + label
@@ -76,10 +76,10 @@ export async function initAsteroidsTab() {
   if (afInited) return;
   afInited = true;
   const status = document.getElementById('af-progress');
-  status.textContent = 'Loading…';
+  setStatusText(status, 'Loading…');
 
   const planets = await browser.runtime.sendMessage({ type: 'GET_PLANETS' });
-  if (planets.error) { status.textContent = `Error: ${planets.error}`; afInited = false; return; }
+  if (planets.error) { setStatusText(status, `Error: ${planets.error}`); afInited = false; return; }
   afPlanets = (planets.planets || []).filter(p => p.systemId != null);
 
   const me = await browser.runtime.sendMessage({ type: 'GET_AUTH_ME' });
@@ -103,6 +103,16 @@ export async function initAsteroidsTab() {
   if (savedSel['af-planet'] && afPlanets.some(p => String(p.id) === savedSel['af-planet'])) {
     pSel.value = savedSel['af-planet'];   // remembered planet survives tabs/sessions
   }
+  for (const [id, key] of [['af-mult-min', 'af-mult-min'], ['af-qty-min', 'af-qty-min'], ['af-left-min', 'af-left-min'], ['af-near', 'af-near']]) {
+    const value = savedSel[key];
+    if (value != null && String(value) !== '') document.getElementById(id).value = String(value);
+  }
+  if (Array.isArray(savedSel['af-type-filter'])) {
+    afTypeFilter.clear(); savedSel['af-type-filter'].forEach(v => afTypeFilter.add(v));
+  }
+  if (Array.isArray(savedSel['af-zone-filter'])) {
+    afZoneFilter.clear(); savedSel['af-zone-filter'].forEach(v => afZoneFilter.add(v));
+  }
 
   drawTypeIcons();
   drawZoneToggles();
@@ -125,8 +135,9 @@ export async function initAsteroidsTab() {
   document.getElementById('af-scan').addEventListener('click', scan);
   document.getElementById('af-template-select').addEventListener('change', e => { rememberSelection('af-template-select', e.target.value); computeFuel(); });
   const excChk = document.getElementById('af-excavator');
-  excChk.checked = localStorage.getItem('nx-af-excavator') === '1';
-  excChk.addEventListener('change', () => { localStorage.setItem('nx-af-excavator', excChk.checked ? '1' : '0'); renderAsteroids(); });
+  const savedExc = savedSel['af-excavator'];
+  excChk.checked = savedExc === true || (savedExc == null && localStorage.getItem('nx-af-excavator') === '1');
+  excChk.addEventListener('change', () => { rememberSelection('af-excavator', excChk.checked); renderAsteroids(); });
   document.getElementById('af-results-head').addEventListener('click', e => {
     const th = e.target.closest('th.sortable');
     if (!th) return;
@@ -136,9 +147,10 @@ export async function initAsteroidsTab() {
   });
   document.getElementById('af-btn-prev').addEventListener('click', () => { afPage--; renderAsteroids(); });
   document.getElementById('af-btn-next').addEventListener('click', () => { afPage++; renderAsteroids(); });
-  for (const id of ['af-mult-min', 'af-qty-min', 'af-left-min']) {
-    document.getElementById(id).addEventListener('input', e => {
+  for (const id of ['af-mult-min', 'af-qty-min', 'af-left-min', 'af-near']) {
+    document.getElementById(id).addEventListener('change', e => {
       if (parseFloat(e.target.value) < 0) e.target.value = '';   // positive only
+      rememberSelection(id, e.target.value);
       afPage = 1;
       renderAsteroids();
     });
@@ -164,7 +176,7 @@ export async function initAsteroidsTab() {
     }, 10000);   // catch returning mining fleets without a reload
   }
 
-  status.textContent = 'Pick how many nearest systems to scan, then Scan.';
+  setStatusText(status, 'Pick how many nearest systems to scan, then Scan.');
 }
 
 // Ships stationed on the selected mining planet, shown above the fields table.
@@ -249,8 +261,20 @@ function drawZoneInto(boxId, filter, redraw, after) {
 }
 
 // Main fields filter: re-render the table on toggle.
-function drawTypeIcons() { drawTypeInto('af-type', afTypeFilter, drawTypeIcons, () => { afPage = 1; renderAsteroids(); }); }
-function drawZoneToggles() { drawZoneInto('af-zone', afZoneFilter, drawZoneToggles, () => { afPage = 1; renderAsteroids(); }); }
+function drawTypeIcons() {
+  drawTypeInto('af-type', afTypeFilter, drawTypeIcons, () => {
+    afPage = 1;
+    rememberSelection('af-type-filter', [...afTypeFilter]);
+    renderAsteroids();
+  });
+}
+function drawZoneToggles() {
+  drawZoneInto('af-zone', afZoneFilter, drawZoneToggles, () => {
+    afPage = 1;
+    rememberSelection('af-zone-filter', [...afZoneFilter]);
+    renderAsteroids();
+  });
+}
 // Live-search filter: persist config on toggle (if currently running).
 function drawLsTypeIcons() { drawTypeInto('ls-type', lsTypeFilter, drawLsTypeIcons, saveLiveSearchIfOn); }
 function drawLsZoneToggles() { drawZoneInto('ls-zone', lsZoneFilter, drawLsZoneToggles, saveLiveSearchIfOn); }
@@ -279,13 +303,11 @@ function setLsButton() {
   const status = document.getElementById('ls-status');
   btn.textContent = lsRunning ? 'Stop Live Search' : 'Live Search';
   btn.style.cssText = lsRunning ? 'background:#da3633; border:1px solid #f85149; color:#fff;' : '';
-  if (!lsRunning) { status.textContent = ''; status.style.color = '#8b949e'; return; }
+  if (!lsRunning) { setStatusText(status, ''); return; }
   if (!lsTypeFilter.size) {
-    status.textContent = '⚠ No resource type selected — every field type will match.';
-    status.style.color = '#e3b341';
+    setStatusText(status, '⚠ No resource type selected — every field type will match.', 'warning');
   } else {
-    status.textContent = 'Scanning every 5 min in the background — notifies on new matches.';
-    status.style.color = '#8b949e';
+    setStatusText(status, 'Scanning every 5 min in the background — notifies on new matches.');
   }
 }
 async function toggleLiveSearch() {
@@ -323,11 +345,11 @@ async function scan() {
   if (!p) return;
   const count = Math.max(1, Math.min(500, parseInt(document.getElementById('af-near').value, 10) || 25));
 
-  status.textContent = 'Loading galaxy map…';
+  setStatusText(status, 'Loading galaxy map…');
   let map;
-  try { map = await loadMap(); } catch (e) { status.textContent = `Error: ${e.message}`; return; }
+  try { map = await loadMap(); } catch (e) { setStatusText(status, `Error: ${e.message}`); return; }
   const src = map.byId[p.systemId];
-  if (!src) { status.textContent = 'Source system not on the map.'; return; }
+  if (!src) { setStatusText(status, 'Source system not on the map.'); return; }
   afRefMS = { x: src.x, y: src.y };
 
   // The N nearest explored systems (asteroid fields need at least partial vis).
@@ -337,7 +359,7 @@ async function scan() {
     .sort((a, b) => a.d - b.d)
     .slice(0, count)
     .map(o => o.s);
-  if (!targets.length) { status.textContent = 'No explored systems nearby.'; return; }
+  if (!targets.length) { setStatusText(status, 'No explored systems nearby.'); return; }
 
   const { planet_scan_cache } = await browser.storage.local.get('planet_scan_cache');
   const cache = planet_scan_cache || {};
@@ -378,7 +400,7 @@ async function scan() {
       }
       scanned++;
       if (scanned % 10 === 0) {
-        status.textContent = `Scanning… ${scanned}/${targets.length} systems, ${afFields.length} fields.`;
+        setStatusText(status, `Scanning… ${scanned}/${targets.length} systems, ${afFields.length} fields.`);
         renderAsteroids();
       }
       await new Promise(r => setTimeout(r, 80)); // be polite to the game API
@@ -399,8 +421,8 @@ async function scan() {
 
   await resolveAllianceTags(afFields.filter(f => f.ownerName).map(f => f.ownerName));
 
-  status.textContent = `Done: ${afFields.length} fields in ${scanned} systems` +
-    (errors ? ` · ${errors} skipped (errors)` : '') + '.';
+  setStatusText(status, `Done: ${afFields.length} fields in ${scanned} systems` +
+    (errors ? ` · ${errors} skipped (errors)` : '') + '.');
   renderAsteroids();
 }
 
@@ -452,9 +474,9 @@ async function sendMineMission(f) {
   const status = document.getElementById('af-progress');
   if (!planetId) { alert('Pick a source planet first.'); return; }
 
-  status.textContent = 'Checking fleet…';
+  setStatusText(status, 'Checking fleet…');
   const av = await browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId });
-  if (av.error) { status.textContent = `Error: ${av.error}`; return; }
+  if (av.error) { setStatusText(status, `Error: ${av.error}`); return; }
   const avail = av.available || {};
 
   // Seed the editor straight from the selected template — the "Optimise Mining
@@ -478,7 +500,7 @@ async function sendMineMission(f) {
   });
   if (!ships || !ships.length) return;   // cancelled or emptied
 
-  status.textContent = `Sending to ${f.name}…`;
+  setStatusText(status, `Sending to ${f.name}…`);
   const res = await browser.runtime.sendMessage({
     type: 'SEND_MINE',
     sourcePlanetId: planetId,
@@ -486,7 +508,7 @@ async function sendMineMission(f) {
     ships,
     miningDuration: MINING_DURATION,
   });
-  status.textContent = res.error ? `Send failed: ${res.error}` : `Fleet sent to ${f.name} ✓`;
+  setStatusText(status, res.error ? `Send failed: ${res.error}` : `Fleet sent to ${f.name} ✓`);
   if (!res.error) {
     afMiningFieldIds.add(f.fieldId);   // optimistic — GET_MISSIONS can lag right after the send
     renderAsteroids();

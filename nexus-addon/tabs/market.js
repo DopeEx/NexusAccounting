@@ -5,7 +5,7 @@
 // so "buy" filters on offerResource and "sell" on requestResource. Ratio is
 // received-per-given (offerAmount / requestAmount) — higher is a better deal.
 
-import { applySort, attachSortable, fmt } from '../common.js';
+import { applySort, attachSortable, fmt, setStatusText } from '../common.js';
 
 const ICON_BASE = 'https://s0.nexuslegacy.space/images/resources/';
 // All tradable resources, always shown as filter icons (basic first, then exotic).
@@ -77,7 +77,7 @@ export async function initMarketTab() {
 async function loadOrders() {
   const alliance = source === 'alliance';
   const status = document.getElementById('m-progress');
-  status.textContent = `Loading ${alliance ? 'alliance trade' : 'market'} orders…`;
+  setStatusText(status, `Loading ${alliance ? 'alliance trade' : 'market'} orders…`);
   document.getElementById('m-hub-col').textContent = alliance ? 'System' : 'Hub';
 
   const toOrder = (o, hub) => ({
@@ -88,14 +88,14 @@ async function loadOrders() {
 
   if (alliance) {
     const data = await browser.runtime.sendMessage({ type: 'GET_ALLIANCE_ORDERS' });
-    if (data.error) { status.textContent = `Error: ${data.error}`; return; }
+    if (data.error) { setStatusText(status, `Error: ${data.error}`); return; }
     orders = (data.orders || []).map(o => toOrder(o, o.systemName || `#${o.id}`));
   } else {
     const [data, hubs] = await Promise.all([
       browser.runtime.sendMessage({ type: 'GET_MARKET_ORDERS' }),
       browser.runtime.sendMessage({ type: 'GET_HUBS' }),
     ]);
-    if (data.error) { status.textContent = `Error: ${data.error}`; return; }
+    if (data.error) { setStatusText(status, `Error: ${data.error}`); return; }
     const hubNames = {};
     for (const h of (hubs?.hubs || [])) hubNames[h.id] = h.name;
     orders = (data.orders || []).map(o => toOrder(o, hubNames[o.hubId] || `Hub ${o.hubId}`));
@@ -104,7 +104,7 @@ async function loadOrders() {
   buyFilter.clear(); sellFilter.clear();
   drawIcons('m-buy');
   drawIcons('m-sell');
-  status.textContent = `${orders.length} open orders.`;
+  setStatusText(status, `${orders.length} open orders.`);
   renderMarket();
 }
 

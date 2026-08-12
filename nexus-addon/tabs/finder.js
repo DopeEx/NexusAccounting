@@ -46,7 +46,7 @@ export async function initFinderTab() {
   if (finderInited) return;
   finderInited = true;
   const status = document.getElementById('f-progress');
-  status.textContent = 'Loading galaxy map…';
+  setStatusText(status, 'Loading galaxy map…');
   const [arms, map, me, ally, hubs] = await Promise.all([
     browser.runtime.sendMessage({ type: 'GET_ARMS' }),
     browser.runtime.sendMessage({ type: 'GET_GALAXY_MAP' }),
@@ -55,7 +55,7 @@ export async function initFinderTab() {
     browser.runtime.sendMessage({ type: 'GET_HUBS' }),
   ]);
   if (arms.error || map.error) {
-    status.textContent = `Error: ${arms.error || map.error}`;
+    setStatusText(status, `Error: ${arms.error || map.error}`);
     finderInited = false;
     return;
   }
@@ -112,7 +112,7 @@ export async function initFinderTab() {
     zsel.appendChild(o);
   }
 
-  status.textContent = `${galaxySystems.length} systems loaded.`;
+  setStatusText(status, `${galaxySystems.length} systems loaded.`);
   drawGalaxyMap();
 }
 
@@ -327,7 +327,7 @@ document.getElementById('f-search').addEventListener('click', async function () 
 
   const status = document.getElementById('f-progress');
   if (!candidates.length) {
-    status.textContent = 'No scanned systems in that region — explore it first or import galaxy data.';
+    setStatusText(status, 'No scanned systems in that region — explore it first or import galaxy data.');
     return;
   }
 
@@ -382,7 +382,7 @@ document.getElementById('f-search').addEventListener('click', async function () 
       }
       done++;
       if (done % 10 === 0) {
-        status.textContent = `Scanning… ${done}/${candidates.length} systems, ${finderHits.length} matches.`;
+        setStatusText(status, `Scanning… ${done}/${candidates.length} systems, ${finderHits.length} matches.`);
         drawGalaxyMap();
       }
       await new Promise(r => setTimeout(r, 80)); // be polite to the game API
@@ -401,9 +401,9 @@ document.getElementById('f-search').addEventListener('click', async function () 
   }
   await browser.storage.local.set({ planet_scan_cache: cache });
 
-  status.textContent = `Done: ${finderHits.length} matches in ${done} scanned systems` +
+  setStatusText(status, `Done: ${finderHits.length} matches in ${done} scanned systems` +
     (fogged ? ` · ${fogged} unexplored` : '') +
-    (errors ? ` · ${errors} systems skipped (errors)` : '') + '.';
+    (errors ? ` · ${errors} systems skipped (errors)` : '') + '.');
   drawGalaxyMap();
   renderFinderResults();
 
@@ -414,16 +414,16 @@ document.getElementById('f-search').addEventListener('click', async function () 
   for (let i = 0; i < missing.length; i++) {
     const r = await browser.runtime.sendMessage({ type: 'GET_PLAYER_RANK', name: missing[i] });
     rankCache[missing[i]] = (r && !r.error) ? r : { military: null, economy: null, research: null };
-    status.textContent = `Fetching player ranks… ${i + 1}/${missing.length}`;
+    setStatusText(status, `Fetching player ranks… ${i + 1}/${missing.length}`);
     await new Promise(res => setTimeout(res, 80));
   }
   finderHits.forEach(h => {
     const r = h.owner ? rankCache[h.owner] : null;
     if (r) { h.rankMil = r.military ?? null; h.rankEco = r.economy ?? null; h.rankRes = r.research ?? null; }
   });
-  status.textContent = `Done: ${finderHits.length} matches in ${done} scanned systems` +
+  setStatusText(status, `Done: ${finderHits.length} matches in ${done} scanned systems` +
     (fogged ? ` · ${fogged} unexplored` : '') +
-    (errors ? ` · ${errors} systems skipped (errors)` : '') + '.';
+    (errors ? ` · ${errors} systems skipped (errors)` : '') + '.');
   renderFinderResults();
 });
 
@@ -581,7 +581,7 @@ document.getElementById('f-export').addEventListener('click', async () => {
   const { planet_scan_cache } = await browser.storage.local.get('planet_scan_cache');
   const cache = planet_scan_cache || {};
   const count = Object.keys(cache).length;
-  if (!count) { status.textContent = 'Nothing to export — scan some systems first.'; return; }
+  if (!count) { setStatusText(status, 'Nothing to export — scan some systems first.'); return; }
   const payload = { type: 'nexus_galaxy_scan', version: 1, exported_at: new Date().toISOString(), scans: cache };
   const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -590,7 +590,7 @@ document.getElementById('f-export').addEventListener('click', async () => {
   a.download = `nexus-galaxy-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   URL.revokeObjectURL(url);
-  status.textContent = `Exported ${count} systems.`;
+  setStatusText(status, `Exported ${count} systems.`);
 });
 
 // Import shared knowledge, merging by freshest scan per system.
@@ -621,9 +621,9 @@ document.getElementById('f-import-file').addEventListener('change', async (e) =>
         .forEach(id => delete cache[id]);
     }
     await browser.storage.local.set({ planet_scan_cache: cache });
-    status.textContent = `Imported: ${added} new, ${updated} updated systems. Run a search to use them.`;
+    setStatusText(status, `Imported: ${added} new, ${updated} updated systems. Run a search to use them.`);
   } catch (err) {
-    status.textContent = `Import failed: ${err.message}`;
+    setStatusText(status, `Import failed: ${err.message}`);
   } finally {
     e.target.value = '';   // allow re-importing the same file
   }

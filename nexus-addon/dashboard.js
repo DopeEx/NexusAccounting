@@ -4,7 +4,7 @@
 
 // ── Storage ────────────────────────────────────────────────────────────────
 
-import { activeTab, confirmDialog, dayKey, fuelForMode, getLabelKey, getMode, infoDialog, periodLabelFor, renderMarkdown, renderNetCards, setActiveTab, setStore, store } from './common.js';
+import { activeTab, appendStatusText, confirmDialog, dayKey, fuelForMode, getLabelKey, getMode, infoDialog, periodLabelFor, renderMarkdown, renderNetCards, setActiveTab, setStore, store } from './common.js';
 import { renderBattlesTab } from './tabs/battles.js';
 import { renderDebrisTab } from './tabs/debris.js';
 import { renderExpeditionsTab, setExpPage } from './tabs/expeditions.js';
@@ -66,29 +66,26 @@ export function updateStatus(lastScrape, lastError) {
   const el = document.getElementById('status-text');
   el.textContent = '';
   if (lastError) {
-    const span = document.createElement('span');
-    span.className = 'error';
-    span.textContent = `Error: ${lastError}`;
-    el.appendChild(span);
+    appendStatusText(`Error: ${lastError}`, 'error');
   } else if (lastScrape) {
     el.textContent = `Last scrape: ${new Date(lastScrape).toLocaleString()}`;
   } else {
     el.textContent = 'Never scraped.';
   }
   if (store.stats_drift) {
-    const warn = document.createElement('span');
-    warn.className = 'error';
-    warn.style.marginLeft = '10px';
-    warn.title = `Fields out of sync: ${(store.stats_drift.fields || []).join(', ')}`;
-    warn.textContent = '⚠ Stats drift detected — click "Rebuild stats".';
-    el.appendChild(warn);
+    const warn = appendStatusText(
+      '⚠ Stats drift detected — click "Rebuild stats".',
+      'warning',
+    );
+    if (warn) warn.style.marginLeft = '10px';
+    if (warn) warn.title = `Fields out of sync: ${(store.stats_drift.fields || []).join(', ')}`;
   }
 }
 
 // ── Render ─────────────────────────────────────────────────────────────────
 
 export function renderAll() {
-  if (activeTab === 'global') {
+  if (activeTab === 'global' || activeTab === 'statistics') {
     renderGlobalTab();
     return;
   }
@@ -145,6 +142,9 @@ export function renderAll() {
     renderTechTreeTab();
     return;
   }
+  if (activeTab === 'simulator') {
+    return;
+  }
   populateEventOptions();
   const mode = getMode();
   const t = getTotalsForMode();
@@ -181,22 +181,50 @@ export const TAB_CONTENT = {
   xeno: 'xeno-content',
   market: 'market-content',
   techtree: 'techtree-content',
+  simulator: 'simulator-content',
 };
+
+const SUBTAB_TABS = ['global', 'surveys', 'pirates', 'mining', 'battles', 'debris', 'wormholes'];
+let activeMainTab = (activeTab === 'global' || SUBTAB_TABS.includes(activeTab)) ? 'statistics' : activeTab;
+
+function updateTabNavigation() {
+  const isStatisticsContext = activeMainTab === 'statistics';
+  document.querySelectorAll('.main-tab').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === activeMainTab);
+  });
+  document.querySelectorAll('.subtab').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === activeTab);
+  });
+  document.querySelector('.subtabs')?.classList.toggle('show', isStatisticsContext);
+  document.querySelector('.status-bar')?.classList.toggle('show', isStatisticsContext);
+}
 
 document.querySelectorAll('.tab').forEach(btn => {
   btn.addEventListener('click', () => {
-    setActiveTab(btn.dataset.tab);
-    document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b === btn));
-    for (const [tab, id] of Object.entries(TAB_CONTENT)) {
-      document.getElementById(id).style.display = tab === activeTab ? '' : 'none';
+    const tab = btn.dataset.tab;
+    if (SUBTAB_TABS.includes(tab)) {
+      setActiveTab(tab);
+      activeMainTab = 'statistics';
+    } else if (tab === 'statistics') {
+      setActiveTab('global');
+      activeMainTab = 'statistics';
+    } else {
+      setActiveTab(tab);
+      activeMainTab = tab;
+    }
+    updateTabNavigation();
+    for (const [tabName, id] of Object.entries(TAB_CONTENT)) {
+      document.getElementById(id).style.display = tabName === activeTab ? '' : 'none';
     }
     // View mode and records cap are meaningless on the finder and debris tabs.
     document.getElementById('global-controls').style.display =
-      (activeTab === 'finder' || activeTab === 'asteroids' || activeTab === 'fleets' || activeTab === 'scouting' || activeTab === 'techtree' || activeTab === 'market' || activeTab === 'battles') ? 'none' : '';
+      (activeTab === 'finder' || activeTab === 'asteroids' || activeTab === 'fleets' || activeTab === 'scouting' || activeTab === 'techtree' || activeTab === 'market' || activeTab === 'battles' || activeTab === 'simulator') ? 'none' : '';
     positionControls();
     renderAll();
   });
 });
+
+updateTabNavigation();
 
 // Open directly on a tab when linked with a hash, e.g. dashboard.html#asteroids
 // (used by the live-search results window).
