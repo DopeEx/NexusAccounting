@@ -7,7 +7,7 @@
 // All routed through the game tab (same-origin) like the asteroid mine call.
 
 import { loadFleetTemplates } from './fleets.js';
-import { applySort, attachSortable, clearAvailStrip, confirmDialog, fmtCountdown, fuelEstimate, makeMissionBar, rememberSelection, rememberedSelections, renderAvailStrip, store } from '../common.js';
+import { applySort, attachSortable, clearAvailStrip, confirmDialog, fmtCountdown, fuelEstimate, makeMissionBar, rememberSelection, rememberedSelections, renderAvailStrip, setStatusMessage, store, setStatusText } from '../common.js';
 
 let inited = false;
 let scPlanets = [];          // [{ id, name, systemId, systemName }]
@@ -23,7 +23,11 @@ let scInvestigating = new Set();  // systemIds with an investigate mission in fl
 const scJustSurveyed = new Set(); // systemIds surveyed this session — the missions API lags, so exclude them locally
 const scJustInvestigated = new Set(); // same, for investigate missions
 let scTick = 0;
-let scMissions = [];          // in-flight survey/investigate/collect fleets
+let scMissions = [];
+const maxMissions = 1; // in-flight survey/investigate/collect fleets
+let scAutoScanRunning = false;
+let scAutoInvestigateRunning = false;
+let scAutoSalvageRunning = false;
 // Per-surface bar updaters, each rebuilt by its own render. The 1s tick advances
 // all of them. Keyed so one render doesn't drop another surface's tickers.
 const scTicks = { scan: [], invest: [], debris: [], salvage: [] };
@@ -92,13 +96,13 @@ export async function initScoutingTab() {
   if (inited) return;
   inited = true;
   const status = document.getElementById('sc-progress');
-  status.textContent = 'Loading…';
+  setStatusText(status, 'Loading…');
 
   const [planets, map] = await Promise.all([
     browser.runtime.sendMessage({ type: 'GET_PLANETS' }),
     browser.runtime.sendMessage({ type: 'GET_GALAXY_MAP' }),
   ]);
-  if (map.error) { status.textContent = `Error: ${map.error}`; inited = false; return; }
+  if (map.error) { setStatusText(status, `Error: ${map.error}`); inited = false; return; }
   for (const s of (map.systems || [])) {
     scSystems[s.id] = { x: s.x, y: s.y, name: s.name, zone: s.securityZone || null };
   }
@@ -131,6 +135,19 @@ export async function initScoutingTab() {
   document.getElementById('sc-scan').addEventListener('click', launchScan);
   document.getElementById('sc-refresh').addEventListener('click', loadActiveSurveys);
   document.getElementById('sc-planet').addEventListener('change', e => { rememberSelection('sc-planet', e.target.value); renderSurveys(); computeDebrisFuel(); computeSalvageFuel(); updateAvail(); });
+
+  // automations are disabled when human verification is required.
+  function disableAutomaticsOnHumanCheck() {
+    const ids = ['sc-auto', 'sc-investigate-auto', 'sc-salvage-auto'];
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.checked = false;
+      el.disabled = true;
+      rememberSelection(id, false);
+    }
+  }
+
   document.getElementById('sc-scan-template').addEventListener('change', e => rememberSelection('sc-scan-template', e.target.value));
   document.getElementById('sc-inv-template').addEventListener('change', e => { rememberSelection('sc-inv-template', e.target.value); computeFuel(); });
   document.getElementById('sc-debris-refresh').addEventListener('click', loadDebris);
@@ -138,6 +155,17 @@ export async function initScoutingTab() {
   document.getElementById('sc-debris-invonly').addEventListener('change', e => { scInvestigatedOnly = e.target.checked; renderDebris(); });
   document.getElementById('sc-debris-nearest').checked = savedSel['sc-debris-nearest'] === true;
   document.getElementById('sc-debris-nearest').addEventListener('change', e => { rememberSelection('sc-debris-nearest', e.target.checked); computeDebrisFuel(); });
+  document.getElementById('sc-auto').checked = savedSel['sc-auto'] === true;
+  document.getElementById('sc-auto').addEventListener('change', e => { rememberSelection('sc-auto', e.target.checked); });
+  document.getElementById('sc-investigate-auto').checked = savedSel['sc-investigate-auto'] === true;
+  document.getElementById('sc-investigate-auto').addEventListener('change', e => { rememberSelection('sc-investigate-auto', e.target.checked); });
+  document.getElementById('sc-salvage-auto').checked = savedSel['sc-salvage-auto'] === true;
+  document.getElementById('sc-salvage-auto').addEventListener('change', e => { rememberSelection('sc-salvage-auto', e.target.checked); });
+  document.getElementById('sc-max-missions').value = savedSel['sc-max-missions'] || 1;
+  document.getElementById('sc-max-missions').addEventListener('change', e => { rememberSelection('sc-max-missions', e.target.value); });
+  document.getElementById('sc-slot-reserve').value = savedSel['sc-slot-reserve'] || 0;
+  document.getElementById('sc-slot-reserve').addEventListener('change', e => { rememberSelection('sc-slot-reserve', e.target.value); });
+
   await loadCargoShips();
   updateAvail();
 
@@ -148,13 +176,227 @@ export async function initScoutingTab() {
     tickTimers();
     for (const k in scTicks) for (const upd of scTicks[k]) upd();   // advance all progress bars
     if (++scTick % 10 === 0) updateAvail();       // catch returning fleets
-    if (scTick % 30 === 0) { loadActiveSurveys(); loadDebris(); }
+    if (scTick % 15 === 0 && document.getElementById('sc-auto')?.checked) automateScouting();
+    if (scTick % 15 === 0 && document.getElementById('sc-investigate-auto')?.checked) automateInvestigate();
+    if (scTick % 15 === 0 && document.getElementById('sc-salvage-auto')?.checked) automateSalvage();
+    if (scTick % 30 === 0) { loadActiveSurveys(); loadDebris(); }   // refresh the list every 30s
   }, 1000);
 
-  status.textContent = '';
+  setStatusText(status, '');
   loadActiveSurveys();
   loadDebris();
 }
+
+function getMaxMissions() {
+  const el = document.getElementById('sc-max-missions');
+  const value = el ? Number(el.value) : NaN;
+  return Number.isInteger(value) && value > 0 ? value : maxMissions;
+}
+
+function getReservedFleetSlots() {
+  const el = document.getElementById('sc-slot-reserve');
+  const value = el ? Number(el.value) : NaN;
+  return Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
+function getEffectiveMaxFleetSlots(mi) {
+  if (!mi || mi.maxFleetSlots == null) return null;
+  return Math.max(0, mi.maxFleetSlots - getReservedFleetSlots());
+}
+
+function reservedSlotMessage() {
+  const reserve = getReservedFleetSlots();
+  return reserve > 0 ? `; ${reserve} slot${reserve === 1 ? '' : 's'} reserved` : '';
+}
+
+async function automateScouting() {
+  if (scAutoScanRunning) return;
+  scAutoScanRunning = true;
+  let maxScanCount = getMaxMissions(); // default max in-flight survey fleets
+  try {
+    const status = document.getElementById('sc-auto-status');
+    // Check salvage count - pause if too many pending salvage entries
+    const res = await browser.runtime.sendMessage({ type: 'GET_SURVEY_REPORTS' });
+    if (res.error) { setStatusText(status, `Error: ${res.error}`); return; }
+
+    const now = Date.now();
+    const SALVAGE_KEYS_LOCAL = ['ore', 'silicates', 'hydrogen', 'alloys', 'cryo_ice', 'quantum_dust', 'plasma_core', 'dark_matter', 'antimatter'];
+    const salvagePending = (res.reports || [])
+      .map(r => {
+        const loot = r.uncollectedLoot || {};
+        let total = 0;
+        for (const k of SALVAGE_KEYS_LOCAL) { const v = loot[k] || 0; if (v) total += v; }
+        return { total, expires: r.salvageExpiresAt || null };
+      })
+      .filter(s => s.total > 0 && (!s.expires || new Date(s.expires) > now))
+      .length;
+
+    if (salvagePending > 10) {
+      setStatusText(status, `Paused: too many salvage entries to collect (${salvagePending} > 10).`);
+      return;
+    }
+
+    // To avoid sending more fleets than maxScanCount due to race conditions,
+    // re-check missions a few times with short delays before launching.
+    const sleep = ms => new Promise(res => setTimeout(res, ms));
+    let launched = false;
+    for (let attempt = 0; attempt < 3 && !launched; attempt++) {
+      const mi = await browser.runtime.sendMessage({ type: 'GET_MISSIONS' });
+      if (mi.error) { setStatusText(status, `Error: ${mi.error}`); return; }
+      const maxSlots = getEffectiveMaxFleetSlots(mi);
+      if (maxSlots != null && maxSlots <= (mi.missions || []).length) {
+        setStatusText(status, `Cannot launch survey: ${(mi.missions || []).length}/${mi.maxFleetSlots} fleet slots in use${reservedSlotMessage()}.`, 'warning');
+        return;
+      }
+      const inflight = new Set((mi.missions || [])
+        .filter(m => m.missionType === 'survey' && m.targetSystemId != null)
+        .map(m => m.targetSystemId));
+      // Remove any scJustSurveyed entries that are no longer present in missions
+      // (they finished); keep only those still actually inflight to avoid
+      // permanently blocking slots when missions complete.
+      for (const id of Array.from(scJustSurveyed)) {
+        if (inflight.has(id)) continue;
+        scJustSurveyed.delete(id);
+      }
+      // Add remaining just-surveyed ids (only those that still appear inflight)
+      for (const id of scJustSurveyed) inflight.add(id);
+      const scanCount = inflight.size;
+      if (scanCount >= maxScanCount) {
+        setStatusText(status, `Waiting for an available fleet slot… ${scanCount}/${maxScanCount} scanning fleets in flight.`);
+        // if last attempt, give up; otherwise wait and retry
+        if (attempt === 2) return;
+        await sleep(1000);
+        continue;
+      }
+      // launch and assume success; if it fails, launchScan will set status
+      await launchScan();
+      launched = true;
+    }
+  } finally {
+    scAutoScanRunning = false;
+  }
+}
+
+async function automateInvestigate() {
+  if (scAutoInvestigateRunning) return;
+  scAutoInvestigateRunning = true;
+  let maxInvCount = getMaxMissions(); // default max in-flight investigate fleets
+  try {
+    const status = document.getElementById('sc-investigate-status');
+    const [mi, res] = await Promise.all([
+      browser.runtime.sendMessage({ type: 'GET_MISSIONS' }),
+      browser.runtime.sendMessage({ type: 'GET_SURVEY_REPORTS' }),
+    ]);
+    if (mi.error) { setStatusText(status, `Error: ${mi.error}`); return; }
+    if (res.error) { setStatusText(status, `Error: ${res.error}`); return; }
+
+    const maxSlots = getEffectiveMaxFleetSlots(mi);
+    if (maxSlots != null && maxSlots <= (mi.missions || []).length) {
+      setStatusText(status, `Cannot launch investigation: ${(mi.missions || []).length}/${mi.maxFleetSlots} fleet slots in use${reservedSlotMessage()}.`); return;
+    }
+
+    const invCount = (mi.missions || []).filter(m => m.missionType === 'investigate').length;
+    if (invCount >= maxInvCount) {
+      setStatusText(status, `Waiting for an available investigation fleet slot… ${invCount}/${maxInvCount} investigate fleets in flight.`);
+      return;
+    }
+
+    const inflight = new Set((mi.missions || [])
+      .filter(m => m.missionType === 'investigate' && m.targetSystemId != null)
+      .map(m => m.targetSystemId));
+    for (const id of scJustInvestigated) inflight.add(id);
+
+    const now = Date.now();
+    const pending = (res.reports || [])
+      .filter(r => !r.investigated && (!r.anomalyExpiresAt || new Date(r.anomalyExpiresAt) > now)
+        && r.systemId != null && !inflight.has(r.systemId))
+      .sort((a, b) => {
+        const ta = a.createdAt ? Date.parse(a.createdAt) : Infinity;
+        const tb = b.createdAt ? Date.parse(b.createdAt) : Infinity;
+        return ta - tb;
+      });
+
+    if (!pending.length) {
+      setStatusText(status, 'No pending anomaly reports to investigate.');
+      return;
+    }
+    await investigate(pending[0]);
+  } finally {
+    scAutoInvestigateRunning = false;
+  }
+}
+
+async function automateSalvage() {
+  if (scAutoSalvageRunning) return;
+  scAutoSalvageRunning = true;
+  let maxSalvCount = getMaxMissions(); // default max in-flight salvage fleets
+  try {
+    const status = document.getElementById('sc-salvage-status');
+    const [mi, res] = await Promise.all([
+      browser.runtime.sendMessage({ type: 'GET_MISSIONS' }),
+      browser.runtime.sendMessage({ type: 'GET_SURVEY_REPORTS' }),
+    ]);
+    if (mi.error) { setStatusText(status, `Error: ${mi.error}`); return; }
+    if (res.error) { setStatusText(status, `Error: ${res.error}`); return; }
+
+    const maxSlots = getEffectiveMaxFleetSlots(mi);
+    if (maxSlots != null && maxSlots <= (mi.missions || []).length) {
+      setStatusText(status, `Cannot launch salvage: ${(mi.missions || []).length}/${mi.maxFleetSlots} fleet slots in use${reservedSlotMessage()}.`); return;
+    }
+
+    const salvCount = (mi.missions || []).filter(m => m.missionType === 'collect_salvage').length;
+    if (salvCount >= maxSalvCount) {
+      setStatusText(status, `Waiting for an available salvage fleet slot… ${salvCount}/${maxSalvCount} collect_salvage fleets in flight.`);
+      return;
+    }
+
+    const inflight = new Set((mi.missions || [])
+      .filter(m => m.missionType === 'collect_salvage' && m.targetSystemId != null)
+      .map(m => m.targetSystemId));
+    for (const id of scJustSalvaged) inflight.add(id);
+
+    const now = Date.now();
+    const SALVAGE_KEYS_LOCAL = ['ore', 'silicates', 'hydrogen', 'alloys', 'cryo_ice', 'quantum_dust', 'plasma_core', 'dark_matter', 'antimatter'];
+    const pending = (res.reports || [])
+      .map(r => {
+        const loot = r.uncollectedLoot || {};
+        let total = 0;
+        for (const k of SALVAGE_KEYS_LOCAL) { const v = loot[k] || 0; if (v) total += v; }
+        return { reportId: r.id, systemId: r.systemId, system: r.systemName || `#${r.systemId}`, zone: r.securityZone || null, total, expires: r.salvageExpiresAt || null, res: loot };
+      })
+      .filter(s => s.total > 0 && (!s.expires || new Date(s.expires) > now) && s.systemId != null && !inflight.has(s.systemId))
+      .sort((a, b) => b.total - a.total);
+
+    if (!pending.length) { setStatusText(status, 'No uncollected salvage to collect.'); return; }
+
+    // avoid sending two fleets to the same salvage: re-check missions a few times with short delays
+    const sleep = ms => new Promise(res => setTimeout(res, ms));
+    let chosen = pending[0];
+    for (let attempt = 0; attempt < 3; attempt++) {
+      // refresh missions to see if someone else took this salvage
+      const mi2 = await browser.runtime.sendMessage({ type: 'GET_MISSIONS' });
+      if (mi2 && !mi2.error) {
+        const inflight2 = new Set((mi2.missions || [])
+          .filter(m => m.missionType === 'collect_salvage' && m.targetSystemId != null)
+          .map(m => m.targetSystemId));
+        for (const id of scJustSalvaged) inflight2.add(id);
+        if (inflight2.has(chosen.systemId)) {
+          // chosen target already taken, pick next available
+          chosen = pending.find(p => !inflight2.has(p.systemId));
+          if (!chosen) { setStatusText(status, 'No uncollected salvage to collect (targets taken).'); return; }
+        }
+      }
+      // if last attempt or chosen not taken, break
+      if (attempt === 2 || !(await (() => false)())) break; // no-op to allow loop to check attempts
+      await sleep(1000);
+    }
+
+    await collectSalvage(chosen);
+  } finally {
+    scAutoSalvageRunning = false;
+  }
+}
+
 
 async function refreshTemplates() {
   scTemplates = await loadFleetTemplates();
@@ -253,12 +495,16 @@ async function launchScan() {
   const planetId = Number(document.getElementById('sc-planet').value);
   const planet = scPlanets.find(p => p.id === planetId);
 
-  status.textContent = 'Finding nearest system…';
+  setStatusText(status, 'Finding nearest system…');
   const [cd, mi] = await Promise.all([
     browser.runtime.sendMessage({ type: 'GET_SURVEY_COOLDOWNS' }),
     browser.runtime.sendMessage({ type: 'GET_MISSIONS' }),
   ]);
-  if (cd.error) { status.textContent = `Error: ${cd.error}`; return; }
+  const maxSlots = getEffectiveMaxFleetSlots(mi);
+  if (maxSlots != null && maxSlots <= (mi.missions || []).length) {
+    setStatusText(status, `Cannot launch survey: ${(mi.missions || []).length}/${mi.maxFleetSlots} fleet slots in use${reservedSlotMessage()}.`); return;
+  }
+  if (cd.error) { setStatusText(status, `Error: ${cd.error}`); return; }
   const now = Date.now();
   // Exclude systems on cooldown and systems with a survey already in flight
   // (cooldown only starts once that survey completes).
@@ -272,23 +518,34 @@ async function launchScan() {
   const target = nearestTarget(planet ? planet.systemId : null, onCooldown);
   if (!target) {
     const zs = scZoneFilter.size ? [...scZoneFilter].join('/') + ' ' : '';
-    status.textContent = `No available ${zs}system to survey.`;
+    setStatusMessage(status, `No available ${zs}system to survey.`, 'warning');
     return;
   }
 
   const r = await templateShips(document.getElementById('sc-scan-template').value, planetId);
-  if (r.error) { status.textContent = r.error; return; }
-  if (!await confirmDialog(`Survey ${target.name} (${target.dist} away)?\n\n` +
-    `From: ${planet ? planet.name : planetId}\nTemplate: ${r.name}` +
-    (r.short ? '\n\n⚠ Some template ships are short; sending what is available.' : ''), r.ships)) return;
+  if (r.error) { setStatusText(status, r.error); return; }
 
-  status.textContent = `Surveying ${target.name}…`;
+  // Confirmation Dialog disabled for now, since the template ships are already capped to the source planet's stock. The user can still cancel by switching templates or planets before clicking "Scan".
+  //
+  // if (!await confirmDialog(`Survey ${target.name} (${target.dist} away)?\n\n` +
+  //   `From: ${planet ? planet.name : planetId}\nTemplate: ${r.name}` +
+  //   (r.short ? '\n\n⚠ Some template ships are short; sending what is available.' : ''), r.ships)) return;
+
+  setStatusText(status, `Surveying ${target.name}…`);
   const res = await browser.runtime.sendMessage({
     type: 'SEND_SURVEY', sourcePlanetId: planetId, targetSystemId: target.id, ships: r.ships,
   });
-  if (res.error) { status.textContent = `Survey failed: ${res.error}`; return; }
+  if (res.error) {
+    const msg = `Survey failed: ${res.error}`;
+    // If humation is required, show the status message in red
+    if (String(res.error).includes('Human verification')) {
+      disableAutomaticsOnHumanCheck();
+      setStatusText(status, msg, 'error'); return;
+    }
+    setStatusText(status, msg, 'warning'); return;
+  }
   scJustSurveyed.add(target.id);
-  status.textContent = `Probe sent to ${target.name} ✓`;
+  setStatusText(status, `Probe sent to ${target.name} ✓`);
   loadActiveSurveys();
   updateAvail();
 }
@@ -300,7 +557,10 @@ async function loadActiveSurveys() {
   ]);
   if (res.error) { document.getElementById('sc-count').textContent = `Error: ${res.error}`; return; }
   if (mi.maxFleetSlots != null) {
-    document.getElementById('sc-slots').textContent = `${(mi.missions || []).length}/${mi.maxFleetSlots} fleet slots`;
+    const reserve = getReservedFleetSlots();
+    document.getElementById('sc-slots').textContent = reserve > 0
+      ? `${(mi.missions || []).length}/${mi.maxFleetSlots} fleet slots in use (${reserve} reserved)`
+      : `${(mi.missions || []).length}/${mi.maxFleetSlots} fleet slots`;
   }
   scMissions = (mi.missions || []).filter(m => MISSION_LABELS[m.missionType]);
   renderTransit();
@@ -502,19 +762,29 @@ async function investigate(report) {
   const planet = scPlanets.find(p => p.id === planetId);
 
   const r = await templateShips(document.getElementById('sc-inv-template').value, planetId);
-  if (r.error) { status.textContent = r.error; return; }
-  if (!await confirmDialog(`Investigate ${report.systemName} (${report.eventTitle || report.eventType})?\n\n` +
-    `From: ${planet ? planet.name : planetId}\nTemplate: ${r.name}` +
-    (r.short ? '\n\n⚠ Some template ships are short; sending what is available.' : ''), r.ships)) return;
+  if (r.error) { setStatusText(status, r.error); return; }
+  // Confirmation Dialog disabled for now, since the template ships are already capped to the source planet's stock. The user can still cancel by switching templates or planets before clicking "Launch Investigation".
+  //
+  // if (!await confirmDialog(`Investigate ${report.systemName} (${report.eventTitle || report.eventType})?\n\n` +
+  //   `From: ${planet ? planet.name : planetId}\nTemplate: ${r.name}` +
+  //   (r.short ? '\n\n⚠ Some template ships are short; sending what is available.' : ''), r.ships)) return;
 
-  status.textContent = `Investigating ${report.systemName}…`;
+  setStatusText(status, `Investigating ${report.systemName}…`);
   const res = await browser.runtime.sendMessage({
     type: 'SEND_INVESTIGATE', sourcePlanetId: planetId, reportId: report.id, ships: r.ships,
   });
-  if (res.error) { status.textContent = `Investigate failed: ${res.error}`; return; }
+  if (res.error) {
+    const msg = `Investigate failed: ${res.error}`;
+    // If humation is required, show the status message in red
+    if (String(res.error).includes('Human verification')) {
+      disableAutomaticsOnHumanCheck();
+      setStatusText(status, msg, 'error'); return;
+    }
+    setStatusText(status, msg, 'warning'); return;
+  }
   scJustInvestigated.add(report.systemId);
   scInvestigating.add(report.systemId);
-  status.textContent = `Fleet sent to ${report.systemName} ✓`;
+  setStatusText(status, `Fleet sent to ${report.systemName} ✓`);
   loadActiveSurveys();
   setTimeout(loadActiveSurveys, 2000);   // retry for post-POST API lag → prompt bar
   updateAvail();
@@ -873,21 +1143,21 @@ async function computeDebrisFuel() {
 async function collectDebris(field) {
   const status = document.getElementById('sc-progress');
   const planet = debrisSourcePlanet(field.systemId);
-  if (!planet) { status.textContent = 'No source planet found for this field.'; return; }
+  if (!planet) { setStatusText(status, 'No source planet found for this field.'); return; }
   const planetId = planet.id;
 
   const cargo = selectedCargo();
   const plan = planFleet(field.total, cargo);
-  if (!plan.length) { status.textContent = 'Select cargo ships above first.'; return; }
+  if (!plan.length) { setStatusText(status, 'Select cargo ships above first.'); return; }
 
   // Cap to what the source planet actually has; warn if that can't carry it all.
   const av = await browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId });
-  if (av.error) { status.textContent = `Error: ${av.error}`; return; }
+  if (av.error) { setStatusText(status, `Error: ${av.error}`); return; }
   const capOf = id => (scCargoShips.find(s => s.shipDefId === id) || {}).cap || 0;
   const ships = plan
     .map(s => ({ shipDefId: s.shipDefId, quantity: Math.min(s.quantity, av.available[s.shipDefId] || 0) }))
     .filter(s => s.quantity > 0);
-  if (!ships.length) { status.textContent = 'None of the selected cargo ships are on this planet.'; return; }
+  if (!ships.length) { setStatusText(status, 'None of the selected cargo ships are on this planet.'); return; }
   const carried = ships.reduce((sum, s) => sum + s.quantity * capOf(s.shipDefId), 0);
   const short = carried < field.total;
 
@@ -895,16 +1165,24 @@ async function collectDebris(field) {
     `From: ${planet ? planet.name : planetId}` +
     (short ? `\n\n⚠ Selected ships on this planet only carry ${carried.toLocaleString()} — collecting what fits.` : ''), ships)) return;
 
-  status.textContent = `Collecting at ${field.system}…`;
+  setStatusText(status, `Collecting at ${field.system}…`);
   const res = await browser.runtime.sendMessage({
     type: 'COLLECT_DEBRIS', sourcePlanetId: planetId, debrisId: field.debrisId, ships,
   });
-  if (res.error) { status.textContent = `Collect failed: ${res.error}`; return; }
+  if (res.error) {
+    const msg = `Collect failed: ${res.error}`;
+    // If humation is required, show the status message in red
+    if (String(res.error).includes('Human verification')) {
+      disableAutomaticsOnHumanCheck();
+      setStatusText(status, msg, 'error'); return;
+    }
+    setStatusText(status, msg, 'warning'); return;
+  }
   scJustCollected.add(field.debrisId);
   if (field.systemId != null) scCollecting.set(field.systemId, { field: { ...field }, seenRun: false });
   // Loot claimed — drop this system from the investigation history.
   if (field.systemId != null && scInvHistory.delete(field.systemId)) saveInvHistory();
-  status.textContent = `Fleet sent to ${field.system} ✓`;
+  setStatusText(status, `Fleet sent to ${field.system} ✓`);
   renderDebris();
   updateAvail();
   // Pull the new mission in so the progress bar shows promptly; retry once for
@@ -1029,30 +1307,40 @@ async function collectSalvage(salvage) {
 
   const cargo = selectedCargo();
   const plan = planFleet(salvage.total, cargo);
-  if (!plan.length) { status.textContent = 'Select cargo ships above first.'; return; }
+  if (!plan.length) { setStatusText(status, 'Select cargo ships above first.'); return; }
 
   // Cap to what the source planet has; warn if that can't carry it all.
   const av = await browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId });
-  if (av.error) { status.textContent = `Error: ${av.error}`; return; }
+  if (av.error) { setStatusText(status, `Error: ${av.error}`); return; }
   const capOf = id => (scCargoShips.find(s => s.shipDefId === id) || {}).cap || 0;
   const ships = plan
     .map(s => ({ shipDefId: s.shipDefId, quantity: Math.min(s.quantity, av.available[s.shipDefId] || 0) }))
     .filter(s => s.quantity > 0);
-  if (!ships.length) { status.textContent = 'None of the selected cargo ships are on this planet.'; return; }
+  if (!ships.length) { setStatusText(status, 'None of the selected cargo ships are on this planet.'); return; }
   const carried = ships.reduce((sum, s) => sum + s.quantity * capOf(s.shipDefId), 0);
   const short = carried < salvage.total;
 
-  if (!await confirmDialog(`Collect salvage at ${salvage.system} (${salvage.total.toLocaleString()} cargo)?\n\n` +
-    `From: ${planet ? planet.name : planetId}` +
-    (short ? `\n\n⚠ Selected ships on this planet only carry ${carried.toLocaleString()} — collecting what fits.` : ''), ships)) return;
+  // Confirmation Dialog disabled for now, since the template ships are already capped to the source planet's stock. The user can still cancel by switching templates or planets before clicking "Collect Salvage".
+  //
+  // if (!await confirmDialog(`Collect salvage at ${salvage.system} (${salvage.total.toLocaleString()} cargo)?\n\n` +
+  //   `From: ${planet ? planet.name : planetId}` +
+  //   (short ? `\n\n⚠ Selected ships on this planet only carry ${carried.toLocaleString()} — collecting what fits.` : ''), ships)) return;
 
-  status.textContent = `Collecting salvage at ${salvage.system}…`;
+  setStatusText(status, `Collecting salvage at ${salvage.system}…`);
   const res = await browser.runtime.sendMessage({
     type: 'COLLECT_SALVAGE', sourcePlanetId: planetId, reportId: salvage.reportId, ships,
   });
-  if (res.error) { status.textContent = `Collect failed: ${res.error}`; return; }
+  if (res.error) {
+    const msg = `Collect failed: ${res.error}`;
+    // If humation is required, show the status message in red
+    if (String(res.error).includes('Human verification')) {
+      disableAutomaticsOnHumanCheck();
+      setStatusText(status, msg, 'error'); return;
+    }
+    setStatusText(status, msg, 'warning'); return;
+  }
   scJustSalvaged.add(salvage.reportId);
-  status.textContent = `Fleet sent to ${salvage.system} ✓`;
+  setStatusText(status, `Fleet sent to ${salvage.system} ✓`);
   renderSalvage();
   updateAvail();
   // Pull the new mission in so the progress bar shows promptly (retry for lag).

@@ -9,22 +9,27 @@
   <h1>Nexus Accounting</h1>
 
   <nav class="tabs">
-    <button class="tab active" data-tab="global">Global</button>
-    <button class="tab" data-tab="surveys">Surveys</button>
-    <button class="tab" data-tab="pirates">Pirates</button>
-    <button class="tab" data-tab="mining">Mining</button>
-    <button class="tab" data-tab="battles">Battles</button>
-    <button class="tab" data-tab="debris">Debris</button>
-    <button class="tab" data-tab="expeditions">Expeditions</button>
-    <button class="tab" data-tab="wormholes">Wormhole</button>
-    <button class="tab" data-tab="finder">Galaxy Scout</button>
-    <button class="tab" data-tab="asteroids">Asteroids Fields</button>
-    <button class="tab" data-tab="fleets">Fleet Templates</button>
-    <button class="tab" data-tab="scouting">Scouting</button>
-    <button class="tab" data-tab="xeno">Xeno</button>
-    <button class="tab" data-tab="market">Market</button>
-    <button class="tab" data-tab="techtree">Tech Tree</button>
+    <button class="tab main-tab active" data-tab="statistics">Statistics</button>
+    <button class="tab main-tab" data-tab="scouting">Scouting</button>
+    <button class="tab main-tab" data-tab="asteroids">Asteroids Fields</button>
+    <button class="tab main-tab" data-tab="expeditions">Expeditions</button>
+    <button class="tab main-tab" data-tab="xeno">Xeno</button>
+    <button class="tab main-tab" data-tab="fleets">Fleet Templates</button>
+    <button class="tab main-tab" data-tab="finder">Galaxy Scout</button>
+    <button class="tab main-tab" data-tab="market">Market</button>
+    <button class="tab main-tab" data-tab="techtree">Tech Tree</button>
+    <button class="tab main-tab" data-tab="simulator">Combat Simulator</button>
   </nav>
+
+  <div class="subtabs show">
+    <button class="tab subtab active" data-tab="global">Global</button>
+    <button class="tab subtab" data-tab="surveys">Surveys</button>
+    <button class="tab subtab" data-tab="pirates">Pirates</button>
+    <button class="tab subtab" data-tab="mining">Mining</button>
+    <button class="tab subtab" data-tab="battles">Battles</button>
+    <button class="tab subtab" data-tab="debris">Debris</button>
+    <button class="tab subtab" data-tab="wormholes">Wormhole</button>
+  </div>
 
   <div class="status-bar">
     <span id="status-text">Loading…</span>
@@ -34,7 +39,10 @@
     <button id="btn-export">Export JSON</button>
     <button id="btn-import">Import JSON</button>
     <input id="import-file" type="file" accept=".json,application/json" style="display:none;" />
-    <a href="simulator.html" style="color:#58a6ff; margin-left:auto;">Combat Simulator →</a>
+  </div>
+
+  <div id="simulator-content" style="display:none;">
+    <iframe id="simulator-frame" src="simulator.html" title="Combat Simulator"></iframe>
   </div>
 
   <div class="controls" id="global-controls">
@@ -720,6 +728,14 @@
         <select id="sc-scan-template"></select>
       </label>
       <button id="sc-scan">Launch Scan</button>
+      <label style="display:flex; align-items:center; gap:7px; font-size:0.8rem; color:#8b949e;">
+          <span style="font-size:0.9rem; color:#8b949e;">Max Fleets</span>
+          <input type="number" id="sc-max-missions" min="1" step="1" value="1" title="Max Auto Fleets per type (Scan/Investigation/Salvage)" style="width:6rem; margin-left:8px; padding:2px 6px;">
+      </label>
+      <label style="display:flex; align-items:center; gap:7px; font-size:0.8rem; color:#8b949e; margin-left:16px;">
+          <span style="font-size:0.9rem; color:#8b949e;">Reserved Fleets</span>
+          <input type="number" id="sc-slot-reserve" min="0" step="1" value="0" title="Number of fleet slots to keep free for other activity" style="width:6rem; margin-left:8px; padding:2px 6px;">
+      </label>
       <span id="sc-progress" style="color:#8b949e; font-size:0.8rem;"></span>
       <span id="sc-slots" style="margin-left:auto; color:#8b949e; font-size:0.8rem;" title="Fleet slots in use"></span>
     </div>
@@ -729,6 +745,14 @@
         <h2>Scanning fleets in transit</h2>
         <span id="sc-transit-count" style="color:#8b949e; font-size:0.8rem;"></span>
       </div>
+      <div>
+      <div style="display:flex; align-items:center; gap:7px; font-size:0.8rem; color:#8b949e;">
+        <input type="checkbox" id="sc-auto" class="m-switch" title="Automate scouting">
+        <span>Automate Scouting</span>
+        <span id="sc-auto-status" style="margin-left:8px; font-size:0.75rem; color:#8b949e;">Status: -</span>
+      </div>
+      </br>
+    </div>
       <div id="sc-transit-list" style="display:flex; flex-direction:column; gap:10px;"></div>
     </div>
 
@@ -741,6 +765,14 @@
         </label>
         <button id="sc-refresh">Refresh</button>
       </div>
+    <div>
+      <div style="display:flex; align-items:center; gap:7px; font-size:0.8rem; color:#8b949e;">
+        <input type="checkbox" id="sc-investigate-auto" class="m-switch" title="Automate investigation">
+        <span style="user-select:none;">Automate Investigation</span>
+        <span id="sc-investigate-status" style="margin-left:8px; font-size:0.75rem; color:#8b949e;">Status: -</span>
+      </div>
+    </br>
+    </div>
       <div id="sc-inv-avail" style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; color:#8b949e; font-size:0.85rem; margin-bottom:8px;"></div>
       <table>
         <thead>
@@ -805,6 +837,15 @@
         <span id="sc-salvage-count" style="color:#8b949e; font-size:0.8rem;"></span>
         <span style="margin-left:auto; color:#8b949e; font-size:0.85rem;">Uses the cargo ships selected above.</span>
       </div>
+      <div>
+
+      <div style="display:flex; align-items:center; gap:7px; font-size:0.8rem; color:#8b949e;">
+        <input type="checkbox" id="sc-salvage-auto" class="m-switch" title="Automate salvage collection">
+        <span>Automate Salvage Collection</span>
+        <span id="sc-salvage-status" style="margin-left:8px; font-size:0.75rem; color:#8b949e;">Status: -</span>
+      </div>
+    </br>
+    </div>
       <table>
         <thead id="sc-salvage-head">
           <tr>

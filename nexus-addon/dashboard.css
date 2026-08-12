@@ -2,7 +2,7 @@
 body { background: #0d1117; color: #e6edf3; font-family: system-ui, sans-serif; padding: 24px; }
 h1 { font-size: 1.4rem; margin-bottom: 4px; color: #58a6ff; }
 
-.tabs { display: flex; gap: 4px; margin: 12px 0 16px; border-bottom: 1px solid #30363d; }
+.tabs { display: flex; gap: 4px; margin: 12px 0 8px; border-bottom: 1px solid #30363d; }
 .tab {
   background: none; border: none; border-bottom: 2px solid transparent;
   color: #8b949e; padding: 8px 16px; cursor: pointer; font-size: 0.9rem;
@@ -10,11 +10,32 @@ h1 { font-size: 1.4rem; margin-bottom: 4px; color: #58a6ff; }
 .tab:hover { color: #e6edf3; }
 .tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
 
-.status-bar {
-  font-size: 0.75rem; color: #8b949e; margin-bottom: 20px;
-  display: flex; gap: 16px; align-items: center;
+.subtabs {
+  display: none; flex-wrap: wrap; gap: 4px; margin: 0 0 16px;
+  padding-bottom: 8px; border-bottom: 1px solid #30363d;
 }
+.subtabs.show {
+  display: flex;
+}
+.subtab {
+  padding: 6px 12px; font-size: 0.85rem;
+}
+.subtab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+
+.status-bar {
+  display: none; font-size: 0.75rem; color: #8b949e; margin-bottom: 20px;
+  gap: 16px; align-items: center;
+}
+.status-bar.show { display: flex; }
+.status-bar .status-message { color: inherit; }
+.status-bar .status-message.warning { color: #e3b341; }
+.status-bar .status-message.error { color: #ff7b72; }
 .status-bar .error { color: #ff7b72; }
+#simulator-content { margin-top: 8px; }
+#simulator-frame {
+  width: 100%; min-height: 80vh; border: 1px solid #30363d; border-radius: 8px;
+  background: #0d1117;
+}
 .status-bar button {
   background: #21262d; border: 1px solid #30363d; color: #e6edf3;
   padding: 3px 10px; border-radius: 6px; cursor: pointer; font-size: 0.75rem;
