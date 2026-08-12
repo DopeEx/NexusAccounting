@@ -22,30 +22,30 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "[1/5] Erstelle Backup in $BACKUP_FILE"
+echo "[1/5] Creating backup at $BACKUP_FILE"
 mkdir -p "$BACKUP_ROOT"
 tar --exclude='.update-backup' -czf "$BACKUP_FILE" -C "$SCRIPT_DIR" .
 
-echo "[2/5] Klone $REPO_URL (Branch: $BRANCH)"
+echo "[2/5] Cloning $REPO_URL (branch: $BRANCH)"
 git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$WORKDIR/repo"
 
 SOURCE_DIR="$WORKDIR/repo/$SUBDIR"
 if [[ ! -d "$SOURCE_DIR" ]]; then
-  echo "Fehler: Ordner '$SUBDIR' wurde im Repo nicht gefunden."
-  echo "Backup bleibt erhalten: $BACKUP_FILE"
+  echo "Error: Folder '$SUBDIR' was not found in repository."
+  echo "Backup is kept: $BACKUP_FILE"
   exit 1
 fi
 
-echo "[3/5] Entferne alte Dateien (Backup bleibt erhalten)"
+echo "[3/5] Removing old files (backup is kept)"
 find "$SCRIPT_DIR" -mindepth 1 -maxdepth 1 \
   ! -name '.update-backup' \
   ! -name "$SCRIPT_NAME" \
   -exec rm -rf {} +
 
-echo "[4/5] Kopiere neue Dateien"
+echo "[4/5] Copying new files"
 cp -a "$SOURCE_DIR"/. "$SCRIPT_DIR"/
 
-echo "[5/5] Update abgeschlossen"
-echo "Quelle: $REPO_URL@$BRANCH/$SUBDIR"
+echo "[5/5] Update completed"
+echo "Source: $REPO_URL@$BRANCH/$SUBDIR"
 echo "Backup: $BACKUP_FILE"
-echo "Hinweis: Lokale Änderungen wurden durch Repo-Dateien ersetzt."
+echo "Note: Local changes were replaced by repository files."
