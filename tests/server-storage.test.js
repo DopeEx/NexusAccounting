@@ -192,6 +192,35 @@ test('active-game tab detection prefers the Nexus game tab over the extension/da
   assert.equal(store.nexus_active_server, undefined);
 });
 
+test('server-aware backup snapshots include all scoped storage for import/export', async () => {
+  const store = makeBrowserStub();
+  globalThis.location = { hostname: 'example.com', href: 'https://example.com/' };
+
+  await uniqueImport('../nexus-addon/server-storage.js');
+  await globalThis.nexusStorage.setActiveServer('s0');
+  await globalThis.browser.storage.local.set({ foo: 's0-value' });
+  await globalThis.nexusStorage.setActiveServer('nf');
+  await globalThis.browser.storage.local.set({ foo: 'nf-value', nested: { ok: true } });
+
+  const snapshot = await globalThis.nexusStorage.exportFullStorage();
+  assert.equal(snapshot['nexus_server:s0:foo'], 's0-value');
+  assert.equal(snapshot['nexus_server:nf:foo'], 'nf-value');
+  assert.deepEqual(snapshot['nexus_server:nf:nested'], { ok: true });
+
+  const clone = { ...snapshot };
+  await globalThis.nexusStorage.restoreFullStorage({
+    nexus_active_server: 's0',
+    'nexus_server:s0:foo': 'restored-s0',
+    'nexus_server:nf:foo': 'restored-nf',
+  });
+
+  assert.equal(store['nexus_server:s0:foo'], 'restored-s0');
+  assert.equal(store['nexus_server:nf:foo'], 'restored-nf');
+  assert.equal(store.nexus_active_server, 's0');
+  assert.equal((await globalThis.nexusStorage.get('foo')).foo, 'restored-s0');
+  assert.equal((await globalThis.nexusStorage.getActiveServer()).key, 's0');
+});
+
 test('stray unscoped legacy keys are cleaned while scoped server data is preserved', async () => {
   const store = makeBrowserStub();
   globalThis.location = { hostname: 'example.com', href: 'https://example.com/' };

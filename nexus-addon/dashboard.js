@@ -327,9 +327,15 @@ document.getElementById('event-select').addEventListener('change', () => { setCu
 document.getElementById('btn-reset').addEventListener('click', async function () {
   if (!confirm('Drop all recorded data? A backup is written to Downloads/NexusAccounting first.')) return;
   await browser.runtime.sendMessage({ type: 'BACKUP_NOW', reason: 'pre-reset' });
-  const { records_cap } = await browser.storage.local.get('records_cap');
-  await browser.storage.local.clear();
-  if (records_cap) await browser.storage.local.set({ records_cap });
+  const recordsCap = globalThis.nexusStorage?.get ? (await globalThis.nexusStorage.get('records_cap')).records_cap : undefined;
+  if (globalThis.nexusStorage?.clearAllStorage) {
+    await globalThis.nexusStorage.clearAllStorage();
+  } else {
+    await browser.storage.local.clear();
+  }
+  if (recordsCap !== undefined) {
+    await browser.storage.local.set({ records_cap: recordsCap });
+  }
   await loadAll();
 });
 
@@ -390,7 +396,7 @@ document.getElementById('btn-rebuild').addEventListener('click', async function 
 // ── Export / Import ────────────────────────────────────────────────────────
 
 document.getElementById('btn-export').addEventListener('click', async function () {
-  const data = await browser.storage.local.get(null);
+  const data = globalThis.nexusStorage?.exportFullStorage ? await globalThis.nexusStorage.exportFullStorage() : await browser.storage.local.get(null);
   // JSON cannot represent Infinity (unlimited records cap) — store as 0.
   if (data.records_cap === Infinity) data.records_cap = 0;
   const payload = {
@@ -463,8 +469,12 @@ document.getElementById('import-file').addEventListener('change', async function
     await browser.runtime.sendMessage({ type: 'BACKUP_NOW', reason: 'pre-import' });
     const data = payload.data;
     if (data.records_cap === 0) data.records_cap = Infinity;
-    await browser.storage.local.clear();
-    await browser.storage.local.set(data);
+    if (globalThis.nexusStorage?.restoreFullStorage) {
+      await globalThis.nexusStorage.restoreFullStorage(data);
+    } else {
+      await browser.storage.local.clear();
+      await browser.storage.local.set(data);
+    }
     await loadAll();
     btn.textContent = 'Imported ✓';
   } catch (e) {

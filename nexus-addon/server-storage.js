@@ -220,6 +220,26 @@
     if (keys.length) await rawStorage().remove(keys);
   }
 
+  async function exportFullStorage() {
+    await ensureMigrated();
+    return await (baseLocal || rawStorage()).get(null);
+  }
+
+  async function restoreFullStorage(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      throw new Error('Storage snapshot must be an object');
+    }
+    await ensureMigrated();
+    const local = baseLocal || rawStorage();
+    await local.clear();
+    if (Object.keys(data).length) await local.set(data);
+  }
+
+  async function clearAllStorage() {
+    await ensureMigrated();
+    await (baseLocal || rawStorage()).clear();
+  }
+
   const listenerWrappers = new WeakMap();
   const onChanged = Object.freeze({
     addListener(listener) {
@@ -285,6 +305,9 @@
     set,
     remove,
     clear,
+    exportFullStorage,
+    restoreFullStorage,
+    clearAllStorage,
     onChanged,
     servers: SERVERS,
     getActiveServer,

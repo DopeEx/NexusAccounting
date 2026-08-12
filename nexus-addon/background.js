@@ -2355,7 +2355,7 @@ async function rebuildAggregates() {
 const BACKUP_INTERVAL_MS = 7 * 24 * 3600 * 1000;
 
 async function backupToDownloads(reason) {
-  const data = await browser.storage.local.get(null);
+  const data = globalThis.nexusStorage?.exportFullStorage ? await globalThis.nexusStorage.exportFullStorage() : await browser.storage.local.get(null);
   if (data.records_cap === Infinity) data.records_cap = 0;
   const payload = {
     nexus_accounting_backup: 1,
