@@ -2,6 +2,8 @@
 // collecting gas, future jobs). A template is planet-agnostic — ship quantities
 // keyed by shipDefId. Stored under `fleet_templates`.
 
+import { setStatusText } from '../common.js';
+
 let inited = false;
 let templates = [];          // [{ id, name, ships: { shipDefId: qty } }]
 let shipDefs = [];           // catalog: [{ shipDefId, name, shipClass, miningCargo, attack, ... }]

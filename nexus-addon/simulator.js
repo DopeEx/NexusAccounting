@@ -1,6 +1,7 @@
 // Combat simulator UI. The battle engine (tables, modifiers, Monte Carlo)
 // lives in engine.js, shared between this page and the node test suite.
 
+import { setStatusText } from './common.js';
 import {
   shipDefs, setShipDefs, runSimulations, simulateOnce, computeMods,
   NO_MODS, TECHS, TECH_MAX_LEVEL, lossesToResources,
@@ -331,7 +332,7 @@ document.getElementById('btn-run').addEventListener('click', async function() {
   const hasDefense = ['def-missile','def-laser','def-railgun','def-plasma','def-ion','def-ew']
     .some(id => (parseInt(document.getElementById(id).value, 10) || 0) > 0);
   if (!Object.keys(attackerFleet).length || (!Object.keys(defenderFleet).length && !hasDefense)) {
-    setStatusText(status, 'Attacker needs ships); defender needs ships or a turret level.';
+    setStatusText(status, 'Attacker needs ships; defender needs ships or a turret level.');
     return;
   }
   setStatusText(status, 'Simulating…');

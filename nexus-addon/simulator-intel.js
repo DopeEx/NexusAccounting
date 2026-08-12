@@ -1,5 +1,6 @@
 // Simulator: fleet import and intel auto-fill (spy + camp scout reports).
 
+import { setStatusText } from './common.js';
 import { shipDefs } from './engine.js';
 import { fmt, updateFleetStats } from './simulator.js';   // circular: both are functions, only called from handlers
 
