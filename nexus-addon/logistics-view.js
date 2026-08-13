@@ -780,10 +780,11 @@ async function renderBuilder() {
     // even clickable, instead of only finding out from the dispatch rejection.
     if (est && b.mode === 'resource') {
       const need = getCargoNeed();
+      const statusText = String(status?.dataset?.status ?? '');
       if (need > est.totalCargoCapacity) {
         send.disabled = true;
         setStatusText(status, `Cargo hold exceeds fleet capacity: ${fmt(need)} > ${fmt(est.totalCargoCapacity)}`, 'error');
-      } else if (status.dataset.status.startsWith('Cargo hold exceeds')) {
+      } else if (statusText.startsWith('Cargo hold exceeds')) {
         setStatusText(status, '');
       }
     }
