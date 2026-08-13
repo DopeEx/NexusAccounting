@@ -89,6 +89,18 @@ const SCHEMA_VERSION = 10;
 
 // ── Setup ──────────────────────────────────────────────────────────────────
 
+async function ensureScrapeAlarm() {
+  try {
+    const alarm = await browser.alarms.get(ALARM);
+    if (!alarm) {
+      browser.alarms.create(ALARM, { periodInMinutes: INTERVAL_MIN });
+      console.log('[NexusAccounting] Re-armed periodic scrape alarm.');
+    }
+  } catch (err) {
+    console.warn('[NexusAccounting] Failed to ensure scrape alarm:', err);
+  }
+}
+
 browser.runtime.onInstalled.addListener(async details => {
   browser.alarms.create(ALARM, { periodInMinutes: INTERVAL_MIN });
   // Re-arm the asteroid live-search alarm if it was left enabled.
@@ -106,9 +118,20 @@ browser.runtime.onInstalled.addListener(async details => {
   await scrape();
 });
 
-browser.alarms.onAlarm.addListener(alarm => {
-  if (alarm.name === ALARM) scrape();
-  if (alarm.name === LS_ALARM) liveSearchScan();
+browser.runtime.onStartup?.addListener(() => {
+  ensureScrapeAlarm();
+});
+
+// Service workers are ephemeral; re-check on each wake so a cleared alarm
+// (browser restart/disable-enable/crash-recovery) self-heals automatically.
+ensureScrapeAlarm();
+
+browser.alarms.onAlarm.addListener(async alarm => {
+  if (alarm.name === ALARM) {
+    await browser.storage.local.set({ last_alarm_fire_at: new Date().toISOString() });
+    await scrape();
+  }
+  if (alarm.name === LS_ALARM) await liveSearchScan();
 });
 
 // ── Asteroid live search ───────────────────────────────────────────────────
@@ -1290,8 +1313,6 @@ async function processSurveyReports(reports, ships, zones = {}) {
     resources_lost: resourcesLost,
     event_breakdown: Object.values(eventMap).sort((a, b) => b.count - a.count),
     recent_reports: recentReports.slice(0, recordsCap),
-    last_scrape: new Date().toISOString(),
-    last_error: null,
     schema_version: SCHEMA_VERSION,
   });
 
@@ -1435,8 +1456,6 @@ async function processPirateReports(pirateReports, ships, campZones = {}) {
     pirate_outcomes: Object.values(outcomeMap).sort((a, b) => b.count - a.count),
     pirate_debris_total: pirateDebris,
     pirate_recent_reports: pirateRecent.slice(0, recordsCap),
-    last_scrape: new Date().toISOString(),
-    last_error: null,
     schema_version: SCHEMA_VERSION,
   });
 
@@ -1792,8 +1811,6 @@ async function processMiningReports(reports, ships, zones = {}) {
     mining_daily: Object.values(dailyMap).sort((a, b) => a.day.localeCompare(b.day)),
     mining_resources_lost: lost,
     mining_recent_reports: recent.slice(0, recordsCap),
-    last_scrape: new Date().toISOString(),
-    last_error: null,
   });
 
   return fresh.length;
@@ -1911,8 +1928,6 @@ async function processExpeditionReports(reports, runs, ships, zones = {}, wormho
       wormhole_resources_lost: whLost,
       exp_daily: Object.values(dailyMap).sort((a, b) => a.day.localeCompare(b.day)),
       exp_recent_reports: recent.slice(0, recordsCap),
-      last_scrape: new Date().toISOString(),
-      last_error: null,
     });
   }
   return added;

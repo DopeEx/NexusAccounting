@@ -32,6 +32,7 @@ export async function loadAll() {
   setStore(await browser.storage.local.get([
     'totals', 'daily', 'hourly', 'resources_lost', 'event_breakdown',
     'recent_reports', 'ships', 'last_scrape', 'last_error', 'records_cap',
+    'last_alarm_fire_at',
     'pirate_totals', 'pirate_daily', 'pirate_resources_lost',
     'pirate_outcomes', 'pirate_debris_total', 'pirate_recent_reports',
     'mining_totals', 'mining_daily', 'mining_resources_lost', 'mining_recent_reports',
@@ -71,6 +72,7 @@ export async function updateStorageFooter() {
 
 export function updateStatus(lastScrape, lastError) {
   const el = document.getElementById('status-text');
+  const alarmEl = document.getElementById('status-alarm-text');
   el.textContent = '';
   if (lastError) {
     appendStatusText(el, `Error: ${lastError}`, 'error');
@@ -87,6 +89,18 @@ export function updateStatus(lastScrape, lastError) {
     );
     if (warn) warn.style.marginLeft = '10px';
     if (warn) warn.title = `Fields out of sync: ${(store.stats_drift.fields || []).join(', ')}`;
+  }
+
+  if (alarmEl) {
+    if (expertModeEnabled) {
+      alarmEl.style.display = 'inline';
+      alarmEl.textContent = store.last_alarm_fire_at
+        ? `Last alarm: ${new Date(store.last_alarm_fire_at).toLocaleString()}`
+        : 'Last alarm: never';
+    } else {
+      alarmEl.style.display = 'none';
+      alarmEl.textContent = '';
+    }
   }
 }
 
@@ -222,6 +236,7 @@ function applyExpertModeVisibility() {
   updateTabNavigation();
   syncVisibleTabContent();
   updateGlobalControlsVisibility();
+  updateStatus(store.last_scrape, store.last_error);
 }
 
 function updateGlobalControlsVisibility() {
@@ -317,7 +332,7 @@ if (serverSelect) {
   });
 }
 
-browser.storage.onChanged.addListener((changes, area) => {
+browser.storage.local.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.nexus_active_server) {
     loadAll().catch(() => {});
   }
@@ -586,6 +601,9 @@ async function maybeShowWhatsNew() {
   infoDialog(`What's new in v${whatsnew_pending}`, body);
 }
 
-browser.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && (changes.last_scrape || changes.totals || changes.pirate_totals)) loadAll();
+browser.storage.local.onChanged.addListener((changes, area) => {
+  if (area === 'local' && (
+    changes.last_scrape || changes.last_error || changes.last_alarm_fire_at ||
+    changes.totals || changes.pirate_totals
+  )) loadAll();
 });
