@@ -23,13 +23,26 @@ import { getEventBreakdownForMode, getResourcesLostForMode, getSeriesForMode, ge
 import { renderTechTreeTab } from './tabs/techtree.js';
 
 export async function loadAll() {
+  try {
+    await browser.runtime.sendMessage({ type: 'SYNC_STATS_NOW' });
+  } catch {
+    // Background may still be waking up; fall back to current local snapshot.
+  }
+
+  let syncStatus;
+  try {
+    syncStatus = await browser.runtime.sendMessage({ type: 'GET_STATS_SYNC_STATUS' });
+  } catch {
+    // Leave syncStatus undefined when status is unavailable.
+  }
+
   const activeServer = await globalThis.nexusStorage?.getActiveServer?.() || { key: 's0' };
   const serverSelect = document.getElementById('server-select');
   if (serverSelect) {
     serverSelect.value = activeServer.key || 's0';
   }
 
-  setStore(await browser.storage.local.get([
+  const snapshot = await browser.storage.local.get([
     'totals', 'daily', 'hourly', 'resources_lost', 'event_breakdown',
     'recent_reports', 'ships', 'last_scrape', 'last_error', 'records_cap',
     'last_alarm_fire_at',
@@ -43,7 +56,9 @@ export async function loadAll() {
     'xeno_totals', 'xeno_daily', 'xeno_recent_reports', 'xeno_resources_lost',
     'pvp_recent_reports',
     'research', 'research_speed_mult', 'active_research', 'fuel_log',
-  ]));
+  ]);
+  snapshot.stats_sync_status = syncStatus;
+  setStore(snapshot);
 
   const cap = store.records_cap ?? 5000;
   document.getElementById('records-cap').value = cap === Infinity ? 0 : cap;
@@ -73,6 +88,25 @@ export async function updateStorageFooter() {
 export function updateStatus(lastScrape, lastError) {
   const el = document.getElementById('status-text');
   const alarmEl = document.getElementById('status-alarm-text');
+  const syncEl = document.getElementById('status-sync-text');
+
+  const driftAdvice = (fields) => {
+    const list = Array.isArray(fields) ? fields : [];
+    const hasLocalShare = list.some(f => String(f).startsWith('local_share.'));
+    const hasGlobalSync = list.some(f => String(f).startsWith('global_sync.'));
+
+    if (hasLocalShare && hasGlobalSync) {
+      return 'Action: wait 10-30s, run Scrape Now on both PCs, then if still present run Rebuild stats on the PC with the larger local history.';
+    }
+    if (hasLocalShare) {
+      return 'Action: run Rebuild stats on this PC, then Scrape Now once.';
+    }
+    if (hasGlobalSync) {
+      return 'Action: run Scrape Now on both PCs and wait briefly for sync convergence.';
+    }
+    return 'Action: run Scrape Now once. If warning remains, click Rebuild stats.';
+  };
+
   el.textContent = '';
   if (lastError) {
     appendStatusText(el, `Error: ${lastError}`, 'error');
@@ -82,13 +116,44 @@ export function updateStatus(lastScrape, lastError) {
     el.textContent = 'Never scraped.';
   }
   if (store.stats_drift) {
+    const fields = store.stats_drift.fields || [];
+    const hasLocalShare = fields.some(f => String(f).startsWith('local_share.'));
     const warn = appendStatusText(
       el,
       '⚠ Stats drift detected — click "Rebuild stats".',
       'warning',
     );
     if (warn) warn.style.marginLeft = '10px';
-    if (warn) warn.title = `Fields out of sync: ${(store.stats_drift.fields || []).join(', ')}`;
+    if (warn) warn.title = `Fields out of sync: ${fields.join(', ')}`;
+
+    const advice = appendStatusText(
+      el,
+      ` ${driftAdvice(fields)}`,
+      'warning',
+    );
+    if (advice) advice.style.marginLeft = '8px';
+
+    const quickScrape = document.createElement('button');
+    quickScrape.type = 'button';
+    quickScrape.textContent = 'Scrape now';
+    quickScrape.className = 'tab';
+    quickScrape.style.cssText = 'margin-left:8px; padding:2px 8px; font-size:0.75rem;';
+    quickScrape.addEventListener('click', () => {
+      document.getElementById('btn-scrape')?.click();
+    });
+    el.appendChild(quickScrape);
+
+    if (hasLocalShare) {
+      const quickRebuild = document.createElement('button');
+      quickRebuild.type = 'button';
+      quickRebuild.textContent = 'Rebuild stats';
+      quickRebuild.className = 'tab';
+      quickRebuild.style.cssText = 'margin-left:6px; padding:2px 8px; font-size:0.75rem;';
+      quickRebuild.addEventListener('click', () => {
+        document.getElementById('btn-rebuild')?.click();
+      });
+      el.appendChild(quickRebuild);
+    }
   }
 
   if (alarmEl) {
@@ -101,6 +166,32 @@ export function updateStatus(lastScrape, lastError) {
       alarmEl.style.display = 'none';
       alarmEl.textContent = '';
     }
+  }
+
+  if (syncEl) {
+    const s = store.stats_sync_status || null;
+    if (!s || !s.enabled) {
+      syncEl.textContent = 'Sync: unavailable';
+      syncEl.title = 'browser.storage.sync is not available in this browser/profile.';
+      return;
+    }
+    const merged = s.mergedAt ? new Date(s.mergedAt).toLocaleTimeString() : 'never';
+    const published = s.publishedAt ? new Date(s.publishedAt).toLocaleTimeString() : 'never';
+    const overlap = s.skippedReason === 'overlap_or_known_ids'
+      ? ' · overlap protected'
+      : '';
+    const failed = s.skippedReason === 'sync_write_failed' ? ' · publish failed' : '';
+    syncEl.textContent = `Sync: ${Math.max(1, s.deviceCount || 0)} device(s) · merge ${merged} · publish ${published}${overlap}${failed}`;
+    const wm = s.watermarks || {};
+    syncEl.title =
+      `Server: ${s.serverKey || 's0'}\n` +
+      `Latest report watermarks\n` +
+      `Survey: ${wm.survey || '—'}\n` +
+      `Pirates: ${wm.pirates || '—'}\n` +
+      `Mining: ${wm.mining || '—'}\n` +
+      `Debris: ${wm.debris || '—'}\n` +
+      `Expeditions: ${wm.expedition || '—'}\n` +
+      `Xeno: ${wm.xeno || '—'}`;
   }
 }
 

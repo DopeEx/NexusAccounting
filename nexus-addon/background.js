@@ -87,6 +87,26 @@ const INTERVAL_MIN = 15;
 // Bump this when stored data shape changes; add a MIGRATIONS entry for it.
 const SCHEMA_VERSION = 10;
 
+// Cross-device stats sync (compact aggregates only, no per-report archives).
+const STATS_SYNC_KEY_PREFIX = 'nexus_stats_sync_v1:';
+const STATS_SYNC_DEVICE_ID_KEY = 'stats_sync_device_id';
+const STATS_SYNC_APPLIED_KEY = 'stats_sync_applied_summary';
+const STATS_SYNC_DEVICE_SUMMARY_KEY = 'stats_sync_device_summary';
+const STATS_SYNC_UPDATED_AT_KEY = 'stats_sync_updated_at';
+const STATS_SYNC_DAILY_WINDOW = 10;
+const STATS_SYNC_HOURLY_WINDOW = 24;
+const STATS_SYNC_LAST_PUBLISHED_AT_KEY = 'stats_sync_last_published_at';
+const STATS_SYNC_LAST_SKIP_REASON_KEY = 'stats_sync_last_skip_reason';
+const STATS_SYNC_SEGMENTS = Object.freeze([
+  'survey',
+  'pirates',
+  'mining',
+  'debris',
+  'expedition',
+  'xeno',
+]);
+const STATS_SYNC_ID_HASH_WINDOW = 300;
+
 // ── Setup ──────────────────────────────────────────────────────────────────
 
 async function ensureScrapeAlarm() {
@@ -120,11 +140,19 @@ browser.runtime.onInstalled.addListener(async details => {
 
 browser.runtime.onStartup?.addListener(() => {
   ensureScrapeAlarm();
+  enqueue(syncStatsAcrossDevices);
 });
 
 // Service workers are ephemeral; re-check on each wake so a cleared alarm
 // (browser restart/disable-enable/crash-recovery) self-heals automatically.
 ensureScrapeAlarm();
+
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'sync') return;
+  if (Object.keys(changes).some(key => key.startsWith(STATS_SYNC_KEY_PREFIX))) {
+    enqueue(syncStatsAcrossDevices);
+  }
+});
 
 browser.alarms.onAlarm.addListener(async alarm => {
   if (alarm.name === ALARM) {
@@ -356,6 +384,39 @@ browser.runtime.onMessage.addListener(async msg => {
   if (msg.type === 'GET_SYSTEM_COORDS') return getSystemCoords(msg.names || [], msg.ids || []);
   if (msg.type === 'GET_ALLIANCE') return getAlliance();
   if (msg.type === 'GET_PLAYER_RANK') return getPlayerRanks(msg.name);
+  if (msg.type === 'SYNC_STATS_NOW') return enqueue(syncStatsAcrossDevices).then(() => ({ ok: true }));
+  if (msg.type === 'GET_STATS_SYNC_STATUS') {
+    const syncArea = browser.storage?.sync;
+    const activeServer = await globalThis.nexusStorage?.getActiveServer?.() || { key: 's0' };
+    const serverKey = activeServer.key || 's0';
+    const local = await browser.storage.local.get([
+      STATS_SYNC_DEVICE_ID_KEY,
+      STATS_SYNC_UPDATED_AT_KEY,
+      STATS_SYNC_LAST_PUBLISHED_AT_KEY,
+      STATS_SYNC_LAST_SKIP_REASON_KEY,
+      'recent_reports', 'pirate_recent_reports', 'mining_recent_reports',
+      'debris_collection_log', 'exp_recent_reports', 'xeno_recent_reports',
+    ]);
+    let deviceCount = 0;
+    if (syncArea) {
+      try {
+        const allSync = await syncArea.get(null);
+        deviceCount = Object.keys(parseSyncDeviceEntries(serverKey, allSync)).length;
+      } catch {
+        deviceCount = 0;
+      }
+    }
+    return {
+      enabled: !!syncArea,
+      serverKey,
+      deviceId: local[STATS_SYNC_DEVICE_ID_KEY] || null,
+      deviceCount,
+      mergedAt: local[STATS_SYNC_UPDATED_AT_KEY] || null,
+      publishedAt: local[STATS_SYNC_LAST_PUBLISHED_AT_KEY] || null,
+      skippedReason: local[STATS_SYNC_LAST_SKIP_REASON_KEY] || null,
+      watermarks: localWatermarksFromLocal(local),
+    };
+  }
   if (msg.type === 'GET_RESOURCES') return getResources();
   if (msg.type === 'GET_HUBS') return apiGet('/api/market/hubs');
   if (msg.type === 'GET_MARKET_ORDERS') return getOrders('/api/market/orders');
@@ -976,6 +1037,458 @@ function addLossCost(arr, ships, into, factor = 1) {
 }
 function emptyLost() {
   return { destroyed: emptyResources(), repair: emptyResources() };
+}
+
+function isPlainObject(v) {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+function cloneJson(v) {
+  return v == null ? v : JSON.parse(JSON.stringify(v));
+}
+
+function mergeObjectSum(into, add) {
+  if (!isPlainObject(add)) return into;
+  for (const [k, v] of Object.entries(add)) {
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      into[k] = (typeof into[k] === 'number' ? into[k] : 0) + v;
+    } else if (isPlainObject(v)) {
+      into[k] = mergeObjectSum(isPlainObject(into[k]) ? into[k] : {}, v);
+    } else if (into[k] === undefined) {
+      into[k] = cloneJson(v);
+    }
+  }
+  return into;
+}
+
+function subtractObjectNumbers(minuend, subtrahend) {
+  if (!isPlainObject(minuend)) return {};
+  const out = {};
+  const keys = new Set([...Object.keys(minuend), ...Object.keys(subtrahend || {})]);
+  for (const k of keys) {
+    const a = minuend[k];
+    const b = subtrahend?.[k];
+    if (typeof a === 'number' || typeof b === 'number') {
+      const delta = Math.max(0, (typeof a === 'number' ? a : 0) - (typeof b === 'number' ? b : 0));
+      if (delta) out[k] = delta;
+    } else if (isPlainObject(a) || isPlainObject(b)) {
+      const child = subtractObjectNumbers(isPlainObject(a) ? a : {}, isPlainObject(b) ? b : {});
+      if (Object.keys(child).length) out[k] = child;
+    }
+  }
+  return out;
+}
+
+function hasAnyNumbers(v) {
+  if (typeof v === 'number') return v !== 0;
+  if (!isPlainObject(v)) return false;
+  return Object.values(v).some(hasAnyNumbers);
+}
+
+function isoOrNull(v) {
+  if (!v) return null;
+  const s = String(v);
+  return Number.isNaN(Date.parse(s)) ? null : s;
+}
+
+function isIsoAfter(a, b) {
+  const ta = a ? Date.parse(a) : NaN;
+  const tb = b ? Date.parse(b) : NaN;
+  if (Number.isNaN(ta)) return false;
+  if (Number.isNaN(tb)) return true;
+  return ta > tb;
+}
+
+function latestTimestamp(list, field) {
+  let best = null;
+  for (const row of (list || [])) {
+    const ts = isoOrNull(row?.[field]);
+    if (ts && (!best || isIsoAfter(ts, best))) best = ts;
+  }
+  return best;
+}
+
+function localWatermarksFromLocal(local) {
+  return {
+    survey: latestTimestamp(local.recent_reports, 'created_at'),
+    pirates: latestTimestamp(local.pirate_recent_reports, 'created_at'),
+    mining: latestTimestamp(local.mining_recent_reports, 'created_at'),
+    debris: latestTimestamp(local.debris_collection_log, 'collected_at'),
+    expedition: latestTimestamp(local.exp_recent_reports, 'created_at'),
+    xeno: latestTimestamp(local.xeno_recent_reports, 'created_at'),
+  };
+}
+
+function maxWatermarksFromEntries(deviceEntries) {
+  const out = {};
+  for (const entry of Object.values(deviceEntries || {})) {
+    const wm = entry?.watermarks;
+    if (!isPlainObject(wm)) continue;
+    for (const [src, ts] of Object.entries(wm)) {
+      const normalized = isoOrNull(ts);
+      if (!normalized) continue;
+      if (!out[src] || isIsoAfter(normalized, out[src])) out[src] = normalized;
+    }
+  }
+  return out;
+}
+
+function hasWatermarkAhead(localWatermarks, globalWatermarks) {
+  for (const src of ['survey', 'pirates', 'mining', 'debris', 'expedition', 'xeno']) {
+    if (isIsoAfter(localWatermarks?.[src], globalWatermarks?.[src])) return true;
+  }
+  return false;
+}
+
+function hashString(input) {
+  let h = 2166136261;
+  const s = String(input);
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(36);
+}
+
+function uniqueRecent(arr, max = STATS_SYNC_ID_HASH_WINDOW) {
+  const out = [];
+  const seen = new Set();
+  for (const v of (arr || [])) {
+    if (!v || seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+function localIdHashesFromLocal(local) {
+  const make = (source, list, idField) => uniqueRecent(
+    (list || []).map(r => {
+      const id = r?.[idField];
+      if (id == null) return null;
+      return hashString(`${source}:${id}`);
+    }),
+  );
+
+  return {
+    survey: make('survey', local.recent_reports, 'id'),
+    pirates: make('pirates', local.pirate_recent_reports, 'id'),
+    mining: make('mining', local.mining_recent_reports, 'id'),
+    debris: make('debris', local.debris_collection_log, 'id'),
+    expedition: make('expedition', local.exp_recent_reports, 'id'),
+    xeno: make('xeno', local.xeno_recent_reports, 'id'),
+  };
+}
+
+function globalIdHashSetsFromEntries(deviceEntries) {
+  const out = {
+    survey: new Set(),
+    pirates: new Set(),
+    mining: new Set(),
+    debris: new Set(),
+    expedition: new Set(),
+    xeno: new Set(),
+  };
+  for (const entry of Object.values(deviceEntries || {})) {
+    const map = entry?.id_hashes;
+    if (!isPlainObject(map)) continue;
+    for (const src of Object.keys(out)) {
+      for (const h of (map[src] || [])) {
+        if (h) out[src].add(h);
+      }
+    }
+  }
+  return out;
+}
+
+function hasNewIdHashes(localIdHashes, globalSets) {
+  for (const src of Object.keys(globalSets || {})) {
+    for (const h of (localIdHashes?.[src] || [])) {
+      if (!globalSets[src].has(h)) return true;
+    }
+  }
+  return false;
+}
+
+function toMapBy(list, keyField) {
+  const map = {};
+  for (const row of (list || [])) {
+    const key = row?.[keyField];
+    if (!key) continue;
+    map[key] = cloneJson(row);
+  }
+  return map;
+}
+
+function trimRecentKeyMap(map, maxEntries) {
+  const keys = Object.keys(map || {}).sort((a, b) => b.localeCompare(a)).slice(0, maxEntries);
+  const out = {};
+  for (const key of keys) out[key] = map[key];
+  return out;
+}
+
+function mapToSortedList(map, keyField) {
+  return Object.entries(map || {})
+    .map(([k, v]) => ({ [keyField]: k, ...(isPlainObject(v) ? v : {}) }))
+    .sort((a, b) => String(a[keyField]).localeCompare(String(b[keyField])));
+}
+
+function mapToSortedCountList(map, keyField, countField = 'count') {
+  return Object.entries(map || {})
+    .map(([k, v]) => ({ [keyField]: k, ...(isPlainObject(v) ? v : {}) }))
+    .sort((a, b) => (b[countField] || 0) - (a[countField] || 0));
+}
+
+function buildCompactStatsSummary(local) {
+  return {
+    survey: {
+      totals: cloneJson(local.totals || {}),
+      daily: trimRecentKeyMap(toMapBy(local.daily, 'day'), STATS_SYNC_DAILY_WINDOW),
+      hourly: trimRecentKeyMap(toMapBy(local.hourly, 'hour'), STATS_SYNC_HOURLY_WINDOW),
+      resources_lost: cloneJson(local.resources_lost || {}),
+      event_breakdown: toMapBy(local.event_breakdown, 'event_type'),
+    },
+    pirates: {
+      totals: cloneJson(local.pirate_totals || {}),
+      daily: trimRecentKeyMap(toMapBy(local.pirate_daily, 'day'), STATS_SYNC_DAILY_WINDOW),
+      resources_lost: cloneJson(local.pirate_resources_lost || {}),
+      outcomes: toMapBy(local.pirate_outcomes, 'outcome'),
+      debris_total: cloneJson(local.pirate_debris_total || {}),
+    },
+    mining: {
+      totals: cloneJson(local.mining_totals || {}),
+      daily: trimRecentKeyMap(toMapBy(local.mining_daily, 'day'), STATS_SYNC_DAILY_WINDOW),
+      resources_lost: cloneJson(local.mining_resources_lost || {}),
+    },
+    debris: {
+      collected: cloneJson(local.debris_collected || {}),
+      resources_lost: cloneJson(local.debris_resources_lost || {}),
+    },
+    expedition: {
+      totals: cloneJson(local.exp_totals || {}),
+      expedition_totals: cloneJson(local.expedition_totals || {}),
+      wormhole_totals: cloneJson(local.wormhole_totals || {}),
+      daily: trimRecentKeyMap(toMapBy(local.exp_daily, 'day'), STATS_SYNC_DAILY_WINDOW),
+      expedition_resources_lost: cloneJson(local.expedition_resources_lost || {}),
+      wormhole_resources_lost: cloneJson(local.wormhole_resources_lost || {}),
+    },
+    xeno: {
+      totals: cloneJson(local.xeno_totals || {}),
+      daily: trimRecentKeyMap(toMapBy(local.xeno_daily, 'day'), STATS_SYNC_DAILY_WINDOW),
+      resources_lost: cloneJson(local.xeno_resources_lost || {}),
+    },
+  };
+}
+
+function applyCompactStatsSummaryToLocal(summary) {
+  const survey = summary?.survey || {};
+  const pirates = summary?.pirates || {};
+  const mining = summary?.mining || {};
+  const debris = summary?.debris || {};
+  const expedition = summary?.expedition || {};
+  const xeno = summary?.xeno || {};
+
+  return {
+    totals: cloneJson(survey.totals || {}),
+    daily: mapToSortedList(survey.daily, 'day'),
+    hourly: mapToSortedList(survey.hourly, 'hour'),
+    resources_lost: cloneJson(survey.resources_lost || emptyLost()),
+    event_breakdown: mapToSortedCountList(survey.event_breakdown, 'event_type'),
+
+    pirate_totals: cloneJson(pirates.totals || {}),
+    pirate_daily: mapToSortedList(pirates.daily, 'day'),
+    pirate_resources_lost: cloneJson(pirates.resources_lost || emptyLost()),
+    pirate_outcomes: mapToSortedCountList(pirates.outcomes, 'outcome'),
+    pirate_debris_total: cloneJson(pirates.debris_total || { ore: 0, alloys: 0, silicates: 0 }),
+
+    mining_totals: cloneJson(mining.totals || {}),
+    mining_daily: mapToSortedList(mining.daily, 'day'),
+    mining_resources_lost: cloneJson(mining.resources_lost || emptyLost()),
+
+    debris_collected: cloneJson(debris.collected || { ore: 0, silicates: 0, hydrogen: 0, alloys: 0 }),
+    debris_resources_lost: cloneJson(debris.resources_lost || emptyLost()),
+
+    exp_totals: cloneJson(expedition.totals || {}),
+    expedition_totals: cloneJson(expedition.expedition_totals || {}),
+    wormhole_totals: cloneJson(expedition.wormhole_totals || {}),
+    exp_daily: mapToSortedList(expedition.daily, 'day'),
+    expedition_resources_lost: cloneJson(expedition.expedition_resources_lost || emptyLost()),
+    wormhole_resources_lost: cloneJson(expedition.wormhole_resources_lost || emptyLost()),
+
+    xeno_totals: cloneJson(xeno.totals || {}),
+    xeno_daily: mapToSortedList(xeno.daily, 'day'),
+    xeno_resources_lost: cloneJson(xeno.resources_lost || emptyLost()),
+  };
+}
+
+function syncKeyForServerAndDevice(serverKey, deviceId) {
+  return `${STATS_SYNC_KEY_PREFIX}${serverKey}:${deviceId}`;
+}
+
+function syncSegmentKey(serverKey, deviceId, segment) {
+  return `${syncKeyForServerAndDevice(serverKey, deviceId)}:${segment}`;
+}
+
+function parseDeviceAndSegment(rest) {
+  const idx = rest.indexOf(':');
+  if (idx === -1) return { deviceId: rest, segment: null };
+  return { deviceId: rest.slice(0, idx), segment: rest.slice(idx + 1) };
+}
+
+function parseSyncDeviceEntries(serverKey, allSync) {
+  const prefix = `${STATS_SYNC_KEY_PREFIX}${serverKey}:`;
+  const entries = {};
+  for (const [key, payload] of Object.entries(allSync || {})) {
+    if (!key.startsWith(prefix) || !isPlainObject(payload)) continue;
+    const rest = key.slice(prefix.length);
+    const { deviceId, segment } = parseDeviceAndSegment(rest);
+    if (!deviceId) continue;
+
+    // Legacy monolithic shape: { updated_at, summary, watermarks }
+    if (!segment) {
+      const summary = isPlainObject(payload.summary) ? payload.summary : {};
+      const prev = entries[deviceId] || { summary: {} };
+      entries[deviceId] = {
+        ...prev,
+        updated_at: payload.updated_at || prev.updated_at || null,
+        watermarks: isPlainObject(payload.watermarks) ? payload.watermarks : (prev.watermarks || {}),
+        id_hashes: isPlainObject(payload.id_hashes) ? payload.id_hashes : (prev.id_hashes || {}),
+        summary: mergeObjectSum(isPlainObject(prev.summary) ? prev.summary : {}, summary),
+      };
+      continue;
+    }
+
+    const prev = entries[deviceId] || { summary: {}, watermarks: {}, id_hashes: {} };
+    if (segment === 'meta') {
+      entries[deviceId] = {
+        ...prev,
+        updated_at: payload.updated_at || prev.updated_at || null,
+        watermarks: isPlainObject(payload.watermarks) ? payload.watermarks : (prev.watermarks || {}),
+        id_hashes: isPlainObject(payload.id_hashes) ? payload.id_hashes : (prev.id_hashes || {}),
+      };
+      continue;
+    }
+
+    if (STATS_SYNC_SEGMENTS.includes(segment)) {
+      prev.summary[segment] = cloneJson(payload);
+      entries[deviceId] = prev;
+    }
+  }
+  return entries;
+}
+
+function aggregateDeviceSummaries(deviceEntries) {
+  const out = {};
+  for (const entry of Object.values(deviceEntries || {})) {
+    if (!isPlainObject(entry?.summary)) continue;
+    mergeObjectSum(out, entry.summary);
+  }
+  return out;
+}
+
+function makeDeviceId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `dev-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+async function syncStatsAcrossDevices() {
+  const syncArea = browser.storage?.sync;
+  if (!syncArea) return;
+
+  try {
+    const activeServer = await globalThis.nexusStorage?.getActiveServer?.() || { key: 's0' };
+    const serverKey = activeServer.key || 's0';
+
+    const local = await browser.storage.local.get([
+      'totals', 'daily', 'hourly', 'resources_lost', 'event_breakdown',
+      'pirate_totals', 'pirate_daily', 'pirate_resources_lost', 'pirate_outcomes', 'pirate_debris_total',
+      'mining_totals', 'mining_daily', 'mining_resources_lost',
+      'debris_collected', 'debris_resources_lost',
+      'exp_totals', 'expedition_totals', 'wormhole_totals', 'exp_daily',
+      'expedition_resources_lost', 'wormhole_resources_lost',
+      'xeno_totals', 'xeno_daily', 'xeno_resources_lost',
+      'recent_reports', 'pirate_recent_reports', 'mining_recent_reports',
+      'debris_collection_log', 'exp_recent_reports', 'xeno_recent_reports',
+      STATS_SYNC_DEVICE_ID_KEY, STATS_SYNC_APPLIED_KEY, STATS_SYNC_DEVICE_SUMMARY_KEY,
+      STATS_SYNC_LAST_PUBLISHED_AT_KEY, STATS_SYNC_LAST_SKIP_REASON_KEY,
+    ]);
+
+    const deviceId = local[STATS_SYNC_DEVICE_ID_KEY] || makeDeviceId();
+    const localSummary = buildCompactStatsSummary(local);
+    const appliedSummary = isPlainObject(local[STATS_SYNC_APPLIED_KEY]) ? local[STATS_SYNC_APPLIED_KEY] : {};
+    const localDelta = subtractObjectNumbers(localSummary, appliedSummary);
+
+    const allSync = await syncArea.get(null);
+    const deviceEntries = parseSyncDeviceEntries(serverKey, allSync);
+    const remoteOwn = deviceEntries[deviceId];
+    const baseOwnSummary = isPlainObject(remoteOwn?.summary)
+      ? remoteOwn.summary
+      : (isPlainObject(local[STATS_SYNC_DEVICE_SUMMARY_KEY]) ? local[STATS_SYNC_DEVICE_SUMMARY_KEY] : {});
+
+    const localWatermarks = localWatermarksFromLocal(local);
+    const globalWatermarks = maxWatermarksFromEntries(deviceEntries);
+    const canPublishByWatermark = hasWatermarkAhead(localWatermarks, globalWatermarks);
+    const localIdHashes = localIdHashesFromLocal(local);
+    const globalIdHashSets = globalIdHashSetsFromEntries(deviceEntries);
+    const canPublishByIdHash = hasNewIdHashes(localIdHashes, globalIdHashSets);
+    const initialBootstrap = !local[STATS_SYNC_LAST_PUBLISHED_AT_KEY]
+      && hasAnyNumbers(localSummary)
+      && Object.keys(deviceEntries).length === 0;
+
+    let ownSummary = cloneJson(baseOwnSummary);
+    if (hasAnyNumbers(localDelta) && (canPublishByWatermark || canPublishByIdHash || initialBootstrap)) {
+      ownSummary = mergeObjectSum(ownSummary, localDelta);
+      const updatedAt = new Date().toISOString();
+      const writes = {
+        [syncSegmentKey(serverKey, deviceId, 'meta')]: {
+          updated_at: updatedAt,
+          watermarks: localWatermarks,
+          id_hashes: localIdHashes,
+        },
+      };
+      for (const seg of STATS_SYNC_SEGMENTS) {
+        writes[syncSegmentKey(serverKey, deviceId, seg)] = cloneJson(ownSummary[seg] || {});
+      }
+      try {
+        await syncArea.set(writes);
+        await browser.storage.local.set({
+          [STATS_SYNC_LAST_PUBLISHED_AT_KEY]: updatedAt,
+          [STATS_SYNC_LAST_SKIP_REASON_KEY]: null,
+        });
+      } catch (err) {
+        console.warn('[NexusAccounting] Stats sync write failed (quota/offline?):', err?.message || err);
+        await browser.storage.local.set({
+          [STATS_SYNC_LAST_SKIP_REASON_KEY]: 'sync_write_failed',
+        });
+      }
+      deviceEntries[deviceId] = {
+        updated_at: updatedAt,
+        summary: ownSummary,
+        watermarks: localWatermarks,
+        id_hashes: localIdHashes,
+      };
+    } else if (hasAnyNumbers(localDelta)) {
+      await browser.storage.local.set({
+        [STATS_SYNC_LAST_SKIP_REASON_KEY]: 'overlap_or_known_ids',
+      });
+    }
+
+    const globalSummary = aggregateDeviceSummaries(deviceEntries);
+    if (!Object.keys(globalSummary).length) {
+      await browser.storage.local.set({ [STATS_SYNC_DEVICE_ID_KEY]: deviceId });
+      return;
+    }
+
+    const patch = applyCompactStatsSummaryToLocal(globalSummary);
+    patch[STATS_SYNC_DEVICE_ID_KEY] = deviceId;
+    patch[STATS_SYNC_APPLIED_KEY] = globalSummary;
+    patch[STATS_SYNC_DEVICE_SUMMARY_KEY] = ownSummary;
+    patch[STATS_SYNC_UPDATED_AT_KEY] = new Date().toISOString();
+    await browser.storage.local.set(patch);
+  } catch (err) {
+    console.warn('[NexusAccounting] Stats cross-device sync skipped:', err?.message || err);
+  }
 }
 
 // Add the build-cost value of a { shipDefId: qty } map into `into`, scaled by
@@ -2431,6 +2944,134 @@ async function maybeAutoBackup() {
 // legitimate rebuild never reports drift.
 
 async function checkDrift() {
+  const sum = (arr, field) => (arr || []).reduce((t, r) => t + (r[field] || 0), 0);
+  const problems = [];
+
+  function reconstructFromArchives(surveyArchive, pirateArchive, miningArchive, expArchive) {
+    const miningDeliv = (miningArchive || []).filter(r => (r.report_type || 'delivery') === 'delivery');
+    return {
+      survey: {
+        ore: sum(surveyArchive, 'ore'),
+        hydrogen: sum(surveyArchive, 'hydrogen'),
+        silicates: sum(surveyArchive, 'silicates'),
+        ships_lost: sum(surveyArchive, 'ships_lost'),
+        missions: (surveyArchive || []).length,
+      },
+      pirates: {
+        ore: sum(pirateArchive, 'ore'),
+        hydrogen: sum(pirateArchive, 'hydrogen'),
+        silicates: sum(pirateArchive, 'silicates'),
+        raids: (pirateArchive || []).length,
+      },
+      mining: {
+        ore: sum(miningDeliv, 'ore'),
+        silicates: sum(miningDeliv, 'silicates'),
+        hydrogen: sum(miningDeliv, 'hydrogen'),
+        deliveries: miningDeliv.length,
+      },
+      expedition: {
+        missions: (expArchive || []).length,
+      },
+    };
+  }
+
+  function reconstructFromSummary(summary) {
+    const surveyTotals = summary?.survey?.totals || {};
+    const pirateTotals = summary?.pirates?.totals || {};
+    const miningTotals = summary?.mining?.totals || {};
+    const expTotals = summary?.expedition?.totals || {};
+    return {
+      survey: {
+        ore: surveyTotals.ore || 0,
+        hydrogen: surveyTotals.hydrogen || 0,
+        silicates: surveyTotals.silicates || 0,
+        ships_lost: surveyTotals.ships_lost || 0,
+        missions: surveyTotals.missions || 0,
+      },
+      pirates: {
+        ore: pirateTotals.ore || 0,
+        hydrogen: pirateTotals.hydrogen || 0,
+        silicates: pirateTotals.silicates || 0,
+        raids: pirateTotals.raids || 0,
+      },
+      mining: {
+        ore: miningTotals.ore || 0,
+        silicates: miningTotals.silicates || 0,
+        hydrogen: miningTotals.hydrogen || 0,
+        deliveries: miningTotals.deliveries || 0,
+      },
+      expedition: {
+        missions: expTotals.missions || 0,
+      },
+    };
+  }
+
+  function collectDiffs(actual, expected, labelPrefix) {
+    const defs = {
+      survey: ['ore', 'hydrogen', 'silicates', 'ships_lost', 'missions'],
+      pirates: ['ore', 'hydrogen', 'silicates', 'raids'],
+      mining: ['ore', 'silicates', 'hydrogen', 'deliveries'],
+      expedition: ['missions'],
+    };
+    for (const [group, fields] of Object.entries(defs)) {
+      for (const f of fields) {
+        if ((actual?.[group]?.[f] || 0) !== (expected?.[group]?.[f] || 0)) {
+          problems.push(`${labelPrefix}.${group}.${f}`);
+        }
+      }
+    }
+  }
+
+  // With cross-device aggregate merge enabled, local archives on one device
+  // are only a subset of the merged totals, so archive-vs-total checks would
+  // report false drift. Keep drift checks for single-device/local-only mode.
+  const syncArea = browser.storage?.sync;
+  if (syncArea) {
+    try {
+      const activeServer = await globalThis.nexusStorage?.getActiveServer?.() || { key: 's0' };
+      const serverKey = activeServer.key || 's0';
+      const allSync = await syncArea.get(null);
+      const entries = parseSyncDeviceEntries(serverKey, allSync);
+      const deviceCount = Object.keys(entries).length;
+      if (deviceCount > 1) {
+        const s = await browser.storage.local.get([
+          'totals', 'pirate_totals', 'mining_totals', 'exp_totals',
+          STATS_SYNC_DEVICE_SUMMARY_KEY,
+        ]);
+        const surveyArchive = await loadArchive('survey');
+        const pirateArchive = await loadArchive('pirate');
+        const miningArchive = await loadArchive('mining');
+        const expArchive = await loadArchive('exp');
+
+        const localArchiveView = reconstructFromArchives(surveyArchive, pirateArchive, miningArchive, expArchive);
+        const ownPublished = reconstructFromSummary(s[STATS_SYNC_DEVICE_SUMMARY_KEY] || {});
+        collectDiffs(localArchiveView, ownPublished, 'local_share');
+
+        const globalSummary = aggregateDeviceSummaries(entries);
+        const globalExpected = reconstructFromSummary(globalSummary);
+        const mergedTotalsView = reconstructFromSummary({
+          survey: { totals: s.totals || {} },
+          pirates: { totals: s.pirate_totals || {} },
+          mining: { totals: s.mining_totals || {} },
+          expedition: { totals: s.exp_totals || {} },
+        });
+        collectDiffs(mergedTotalsView, globalExpected, 'global_sync');
+
+        if (problems.length) {
+          await browser.storage.local.set({
+            stats_drift: { detected_at: new Date().toISOString(), fields: problems },
+          });
+          console.warn('[NexusAccounting] Stats drift (multi-device lite) detected:', problems.join(', '));
+        } else {
+          await browser.storage.local.remove('stats_drift');
+        }
+        return;
+      }
+    } catch {
+      // Ignore sync read issues and continue with the local consistency check.
+    }
+  }
+
   const s = await browser.storage.local.get([
     'totals', 'pirate_totals', 'mining_totals', 'exp_totals',
   ]);
@@ -2439,32 +3080,28 @@ async function checkDrift() {
   const miningArchive = await loadArchive('mining');
   const expArchive = await loadArchive('exp');
 
-  const sum = (arr, field) => (arr || []).reduce((t, r) => t + (r[field] || 0), 0);
-  const problems = [];
+  const reconstructed = reconstructFromArchives(surveyArchive, pirateArchive, miningArchive, expArchive);
 
   if (s.totals && surveyArchive.length) {
     for (const f of ['ore', 'hydrogen', 'silicates', 'ships_lost']) {
-      if (sum(surveyArchive, f) !== (s.totals[f] || 0)) problems.push(`surveys.${f}`);
+      if ((reconstructed.survey[f] || 0) !== (s.totals[f] || 0)) problems.push(`surveys.${f}`);
     }
-    if (surveyArchive.length !== (s.totals.missions || 0)) problems.push('surveys.missions');
+    if ((reconstructed.survey.missions || 0) !== (s.totals.missions || 0)) problems.push('surveys.missions');
   }
   if (s.pirate_totals && pirateArchive.length) {
     for (const f of ['ore', 'hydrogen', 'silicates']) {
-      if (sum(pirateArchive, f) !== (s.pirate_totals[f] || 0)) problems.push(`pirates.${f}`);
+      if ((reconstructed.pirates[f] || 0) !== (s.pirate_totals[f] || 0)) problems.push(`pirates.${f}`);
     }
-    if (pirateArchive.length !== (s.pirate_totals.raids || 0)) problems.push('pirates.raids');
+    if ((reconstructed.pirates.raids || 0) !== (s.pirate_totals.raids || 0)) problems.push('pirates.raids');
   }
   if (s.mining_totals && miningArchive.length) {
-    // Totals count 'delivery' reports only (pirate_raid records are kept for the
-    // battles tab), so compare against delivery records — not the whole archive.
-    const miningDeliv = miningArchive.filter(r => (r.report_type || 'delivery') === 'delivery');
     for (const f of ['ore', 'silicates', 'hydrogen']) {
-      if (sum(miningDeliv, f) !== (s.mining_totals[f] || 0)) problems.push(`mining.${f}`);
+      if ((reconstructed.mining[f] || 0) !== (s.mining_totals[f] || 0)) problems.push(`mining.${f}`);
     }
-    if (miningDeliv.length !== (s.mining_totals.deliveries || 0)) problems.push('mining.deliveries');
+    if ((reconstructed.mining.deliveries || 0) !== (s.mining_totals.deliveries || 0)) problems.push('mining.deliveries');
   }
   if (s.exp_totals && expArchive.length) {
-    if (expArchive.length !== (s.exp_totals.missions || 0)) problems.push('expeditions.missions');
+    if ((reconstructed.expedition.missions || 0) !== (s.exp_totals.missions || 0)) problems.push('expeditions.missions');
   }
 
   if (problems.length) {
@@ -2637,6 +3274,7 @@ async function scrape() {
       await processCampScoutReports(campScoutData.reports || []);
       await processPvpReports(pvpData.reports || []);
       await checkDrift();
+      await syncStatsAcrossDevices();
       console.log(`[NexusAccounting] Scraped ${nSurveys} surveys, ${nPirates} pirate, ${nMining} mining reports.`);
     });
     await maybeAutoBackup();

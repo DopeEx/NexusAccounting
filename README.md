@@ -17,7 +17,9 @@ Firefox addon that tracks survey mission data from [Nexus Legacy](https://s0.nex
 
 The addon reads your `nexus_token` JWT directly from the browser cookies, no credentials to enter. You just need to be logged in to Nexus Legacy.
 
-All data is stored locally in `browser.storage.local`. Nothing is sent anywhere.
+Detailed records and archives are stored locally in `browser.storage.local`.
+Compact aggregated statistics are additionally mirrored to `browser.storage.sync`
+so they can merge automatically across your browsers on the same account.
 
 ## Usage
 
@@ -41,6 +43,7 @@ Use the **View** selector (All time / Daily / Hourly) to filter all stats and ch
 ## Settings
 
 - **Records cap**: max survey reports kept locally. Oldest are dropped when limit is reached. Set to `0` for unlimited.
+- **Cross-device stats**: only compact summary stats are synced; full report history stays local.
 - **Reset all data**: drops all stored reports (keeps your cap setting).
 
 ## Screens
@@ -59,6 +62,3 @@ Web UI made with Claude Opus 4.8
 ## License
 
 [Mozilla Public License](https://www.mozilla.org/en-US/MPL/2.0/)
-
-
-

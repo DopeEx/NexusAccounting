@@ -39,7 +39,11 @@ No data is used for advertising, profiling, or any purpose unrelated to displayi
 
 ## 3. Where the data is stored
 
-All data is stored **locally on your device only**, in the browser's `storage.local` area (isolated to this extension). Nothing is uploaded to any server operated by the extension author.
+Detailed records and archives are stored in the browser's `storage.local` area (isolated to this extension).
+
+To support cross-device continuity, the extension may also store a **compact aggregated statistics summary** in `storage.sync` (browser account sync). This summary is merged between your own browsers signed into the same browser account. It does **not** include full per-report history.
+
+Nothing is uploaded to any server operated by the extension author.
 
 The extension also writes automatic backup files to your `Downloads/NexusAccounting/` folder before destructive operations (reset, import, schema migrations) and as a weekly auto-backup. These files are plain JSON and remain on your device under your control.
 
@@ -63,7 +67,7 @@ Data accumulates in local storage as long as the extension is installed. You can
 
 - **Export** a full JSON backup at any time from the dashboard.
 - **Reset** all stored data from the dashboard (a backup is created first).
-- **Uninstall** the extension — the browser removes all `storage.local` data on uninstall.
+- **Uninstall** the extension — the browser removes all extension storage (`storage.local` and synced extension data) when the extension is removed.
 
 Backup files in your Downloads folder are not deleted automatically; you can delete them manually at any time.
 
