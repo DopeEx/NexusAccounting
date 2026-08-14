@@ -8,12 +8,12 @@ import { activeTab, appendStatusText, confirmDialog, dayKey, fuelForMode, getLab
 import { bindServerSelector } from './server-switch.js';
 import { renderBattlesTab } from './tabs/battles.js';
 import { renderDebrisTab } from './tabs/debris.js';
-import { renderExpeditionsTab, setExpPage } from './tabs/expeditions.js';
+import { renderExpeditionStatsTab, renderExpeditionsTab, setExpPage } from './tabs/expeditions.js';
 import { renderWormholesTab, setWhPage } from './tabs/wormholes.js';
 import { initAsteroidsTab } from './tabs/asteroids.js';
 import { renderFleetsTab } from './tabs/fleets.js';
 import { initScoutingTab } from './tabs/scouting.js';
-import { initXenoTab, renderXenoTab, setXnReportPage } from './tabs/xeno.js';
+import { initXenoTab, renderXenoStatsTab, setXnReportPage } from './tabs/xeno.js';
 import { initFinderTab } from './tabs/finder.js';
 import { initMarketTab } from './tabs/market.js';
 import { renderGlobalTab } from './tabs/global.js';
@@ -131,6 +131,10 @@ export function renderAll() {
     renderExpeditionsTab();
     return;
   }
+  if (activeTab === 'expeditions-stats') {
+    renderExpeditionStatsTab();
+    return;
+  }
   if (activeTab === 'wormholes') {
     renderWormholesTab();
     return;
@@ -153,7 +157,10 @@ export function renderAll() {
   }
   if (activeTab === 'xeno') {
     initXenoTab();
-    renderXenoTab();
+    return;
+  }
+  if (activeTab === 'xeno-stats') {
+    renderXenoStatsTab();
     return;
   }
   if (activeTab === 'market') {
@@ -195,21 +202,23 @@ export const TAB_CONTENT = {
   battles: 'battles-content',
   debris: 'debris-content',
   expeditions: 'expeditions-content',
+  'expeditions-stats': 'expeditions-stats-content',
   wormholes: 'wormholes-content',
   finder: 'finder-content',
   asteroids: 'asteroids-content',
   fleets: 'fleets-content',
   scouting: 'scouting-content',
   xeno: 'xeno-content',
+  'xeno-stats': 'xeno-stats-content',
   market: 'market-content',
   techtree: 'techtree-content',
   simulator: 'simulator-content',
 };
 
 const EXPERT_MODE_KEY = 'expert_mode_enabled';
-const EXPERT_TABS = new Set(['scouting', 'fleets']);
+const EXPERT_TABS = new Set(['scouting', 'fleets', 'expeditions', 'xeno']);
 const HIDE_GLOBAL_CONTROLS_TABS = new Set([
-  'finder', 'asteroids', 'fleets', 'scouting', 'techtree', 'market', 'battles', 'simulator',
+  'finder', 'asteroids', 'fleets', 'scouting', 'techtree', 'market', 'simulator', 'xeno',
 ]);
 let expertModeEnabled = false;
 
@@ -240,8 +249,10 @@ function applyExpertModeVisibility() {
 }
 
 function updateGlobalControlsVisibility() {
-  // View mode and records cap are meaningless on these tabs.
-  document.getElementById('global-controls').style.display = HIDE_GLOBAL_CONTROLS_TABS.has(activeTab) ? 'none' : '';
+  // View mode and records cap are hidden only on tabs that do not use Statistics filters.
+  const usesGlobalFilters = activeTab !== 'expeditions' && activeTab !== 'xeno'
+    && !HIDE_GLOBAL_CONTROLS_TABS.has(activeTab);
+  document.getElementById('global-controls').style.display = usesGlobalFilters ? '' : 'none';
 }
 
 function openHashTab() {
@@ -269,7 +280,7 @@ async function initExpertModeToggle() {
   });
 }
 
-const SUBTAB_TABS = ['global', 'surveys', 'pirates', 'mining', 'battles', 'debris', 'wormholes'];
+const SUBTAB_TABS = ['global', 'surveys', 'pirates', 'mining', 'battles', 'debris', 'expeditions-stats', 'xeno-stats', 'wormholes'];
 let activeMainTab = (activeTab === 'global' || SUBTAB_TABS.includes(activeTab)) ? 'statistics' : activeTab;
 
 function updateTabNavigation() {
@@ -309,12 +320,13 @@ document.querySelectorAll('.tab').forEach(btn => {
 
 updateTabNavigation();
 
-// Keep the View/Window/Zone bar directly above the active tab's graphs.
+// Keep the shared View/Window/Zone bar at the top of the active tab's content.
 export function positionControls() {
   const bar = document.getElementById('global-controls');
   const content = document.getElementById(TAB_CONTENT[activeTab]);
-  const charts = content && content.querySelector('.charts');
-  if (charts) charts.parentNode.insertBefore(bar, charts);
+  if (!content) return;
+  const globalContent = document.getElementById('global-content');
+  globalContent.parentElement.insertBefore(bar, globalContent);
 }
 
 // ── Controls ───────────────────────────────────────────────────────────────

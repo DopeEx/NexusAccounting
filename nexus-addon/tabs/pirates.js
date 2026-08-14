@@ -75,7 +75,7 @@ export function renderPiratesTab() {
   collected.textContent = '';
   if (!store.pirate_totals || !store.pirate_totals.raids) {
     const p = document.createElement('p');
-    p.style.cssText = 'color:#484f58;padding:8px 0';
+    p.className = 'mission-empty-state';
     p.textContent = 'No pirate raids recorded yet — click Scrape Now after raiding a camp.';
     collected.appendChild(p);
   } else {
