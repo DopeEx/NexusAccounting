@@ -267,7 +267,7 @@ function renderHistory() {
 
 async function loadOrders() {
   const alliance = source === 'alliance';
-  const status = byId('m-progress');
+  const status = byId('m-count');
   const hubCol = byId('m-hub-col');
   if (!status || !hubCol) return;
   setStatusText(status, `Loading ${alliance ? 'alliance trade' : 'market'} orders…`);
