@@ -13,8 +13,8 @@
     <button class="tab main-tab active" data-tab="statistics">Statistics</button>
     <button class="tab main-tab expert-only" data-tab="scouting">Scouting</button>
     <button class="tab main-tab" data-tab="asteroids">Asteroids Fields</button>
-    <button class="tab main-tab" data-tab="expeditions">Expeditions</button>
-    <button class="tab main-tab" data-tab="xeno">Xeno</button>
+    <button class="tab main-tab expert-only" data-tab="expeditions">Expeditions</button>
+    <button class="tab main-tab expert-only" data-tab="xeno">Xeno</button>
     <button class="tab main-tab expert-only" data-tab="fleets">Fleet Templates</button>
     <button class="tab main-tab" data-tab="finder">Galaxy Scout</button>
     <button class="tab main-tab" data-tab="market">Market</button>
@@ -29,22 +29,24 @@
     <button class="tab subtab" data-tab="mining">Mining</button>
     <button class="tab subtab" data-tab="battles">Battles</button>
     <button class="tab subtab" data-tab="debris">Debris</button>
+    <button class="tab subtab" data-tab="expeditions-stats">Expeditions</button>
+    <button class="tab subtab" data-tab="xeno-stats">Xeno</button>
     <button class="tab subtab" data-tab="wormholes">Wormhole</button>
   </div>
 
   <div class="status-bar">
     <span id="status-text">Loading…</span>
-    <span id="status-alarm-text" style="display:none; margin-left:10px; color:#8b949e; font-size:0.8rem;"></span>
+    <span id="status-alarm-text" class="status-alarm-hidden"></span>
     <span id="status-sync-text" style="margin-left:10px; color:#8b949e; font-size:0.8rem;"></span>
-    <label style="display:inline-flex; align-items:center; gap:6px; margin-left:10px; color:#8b949e; font-size:0.8rem;">
+    <label class="status-server-field">
       Server
-      <select id="server-select" title="Select the Nexus Legacy server whose storage and scrapes should be used." style="background:#21262d; border:1px solid #30363d; color:#e6edf3; border-radius:6px; padding:3px 6px; font-size:0.8rem; color-scheme:dark;">
+      <select id="server-select" class="status-server-select" title="Select the Nexus Legacy server whose storage and scrapes should be used.">
         <option value="s0">NX-S0</option>
         <option value="nf">NX-NF</option>
       </select>
     </label>
     <button id="btn-scrape">Scrape Now</button>
-    <button id="btn-reset" style="color:#ff7b72; border-color:#ff7b7244;">Reset all data</button>
+    <button id="btn-reset" class="status-danger-button">Reset all data</button>
     <button id="btn-rebuild" title="Recompute all aggregated stats from the stored report records — repairs drift after partial failures.">Rebuild stats</button>
     <button id="btn-export">Export JSON</button>
     <button id="btn-import">Import JSON</button>
@@ -55,57 +57,66 @@
     <iframe id="simulator-frame" src="simulator.html" title="Combat Simulator"></iframe>
   </div>
 
-  <div class="controls" id="global-controls">
-    <label for="mode-select">View:</label>
-    <select id="mode-select">
+  <div class="toolbar-panel global-filter-toolbar" id="global-controls">
+    <label class="toolbar-field" for="mode-select">
+      <span class="toolbar-label">View</span>
+      <select id="mode-select" class="toolbar-select">
       <option value="all">All time</option>
       <option value="daily">Daily</option>
       <option value="last3">Last 3 days</option>
       <option value="last7">Last 7 days</option>
       <option value="last30">Last month</option>
       <option value="hourly">Hourly</option>
-    </select>
-    <label for="window-from" style="margin-left:12px;">Days:</label>
-    <input type="date" id="window-from" title="Show data from this day (empty = earliest)."
-      style="background:#21262d; border:1px solid #30363d; color:#e6edf3; padding:3px 6px; border-radius:6px; font-size:0.85rem; color-scheme:dark;" />
-    <span style="color:#8b949e;">–</span>
-    <input type="date" id="window-to" title="Show data up to this day (empty = latest)."
-      style="background:#21262d; border:1px solid #30363d; color:#e6edf3; padding:3px 6px; border-radius:6px; font-size:0.85rem; color-scheme:dark;" />
-    <label for="zone-select" style="margin-left:12px;">Zone:</label>
-    <select id="zone-select" title="Filter by the security zone where data was gathered. Zone-filtered totals are computed from the stored (capped) records.">
+      </select>
+    </label>
+    <div class="toolbar-range-field">
+      <span class="toolbar-label toolbar-range-label">Date range</span>
+      <div class="toolbar-date-inputs">
+        <input type="date" id="window-from" title="Show data from this day (empty = earliest)."
+          class="toolbar-input toolbar-date-input" />
+        <span class="toolbar-range-separator">-</span>
+        <input type="date" id="window-to" title="Show data up to this day (empty = latest)."
+          class="toolbar-input toolbar-date-input" />
+      </div>
+    </div>
+    <label class="toolbar-field" for="zone-select">
+      <span class="toolbar-label">Zone</span>
+      <select id="zone-select" class="toolbar-select" title="Filter by the security zone where data was gathered. Zone-filtered totals are computed from the stored (capped) records.">
       <option value="all">All zones</option>
       <option value="sentinel">Sentinel</option>
       <option value="open">Open</option>
       <option value="dead">Dead</option>
       <option value="rift">Rift</option>
       <option value="unknown">Unknown</option>
-    </select>
-    <span style="margin-left:auto; display:flex; align-items:center; gap:8px; font-size:0.8rem; color:#8b949e;">
-      Records cap
-      <span title="Maximum number of individual survey reports stored locally. Older records are dropped when the limit is reached. Set to 0 for unlimited storage."
-        style="display:inline-flex; align-items:center; justify-content:center;
-               width:14px; height:14px; border-radius:50%; border:1px solid #8b949e;
-               color:#8b949e; font-size:0.65rem; cursor:help; flex-shrink:0;">i</span>
-      :
-      <input id="records-cap" type="text" value="5000"
-        style="width:70px; background:#21262d; border:1px solid #30363d; color:#e6edf3;
-               padding:4px 8px; border-radius:6px; font-size:0.8rem;" />
-      <span id="cap-warning" style="display:none; color:#ff7b72; font-size:0.75rem;">Must be a whole number ≥ 0</span>
-      <button id="btn-save-cap">Save</button>
-    </span>
+      </select>
+    </label>
+    <div class="toolbar-records-cap">
+      <div class="toolbar-records-label">
+        <span class="toolbar-label">Records cap</span>
+        <span title="Maximum number of individual survey reports stored locally. Older records are dropped when the limit is reached. Set to 0 for unlimited storage."
+          class="toolbar-info-mark">i</span>
+      </div>
+      <div class="toolbar-records-controls">
+        <input id="records-cap" class="toolbar-input toolbar-cap-input" type="text" value="5000" />
+        <span id="cap-warning" class="toolbar-warning">Must be a whole number >= 0</span>
+        <button id="btn-save-cap" class="toolbar-button secondary-button">Save</button>
+      </div>
+    </div>
   </div>
 
-  <div id="global-content">
-    <p style="color:#8b949e; font-size:0.85rem; margin-bottom:12px;">
-      Combined across surveys, pirate raids, mining, debris (precise) and expeditions.
-    </p>
-    <div class="section-label">Resources collected (all sources)</div>
-    <div class="stats" id="g-stats-collected"></div>
+  <div id="global-content" class="global-dashboard">
+    <section class="dashboard-panel global-overview-panel">
+      <p class="global-intro">
+        Combined across surveys, pirate raids, mining, debris (precise) and expeditions.
+      </p>
+      <div class="section-label dashboard-section-label">Resources collected (all sources)</div>
+      <div class="stats" id="g-stats-collected"></div>
 
-    <div class="section-label">Net gain (collected − ship costs − fuel)</div>
-    <div class="stats" id="g-stats-net"></div>
+      <div class="section-label dashboard-section-label">Net gain (collected - ship costs - fuel)</div>
+      <div class="stats" id="g-stats-net"></div>
+    </section>
 
-    <div class="charts">
+    <div class="charts global-charts">
       <div class="chart-box">
         <h2>Collected per period</h2>
         <canvas id="chart-global-period"></canvas>
@@ -121,14 +132,16 @@
     </div>
   </div>
 
-  <div id="main-content" style="display:none;">
-    <div class="controls" style="margin-top:0;">
-      <label for="event-select">Event:</label>
-      <select id="event-select" title="Filter survey stats and table by anomaly event type.">
-        <option value="all">All events</option>
-      </select>
+  <div id="main-content" class="statistics-dashboard statistics-split-layout" style="display:none;">
+    <section class="statistics-summary-panel">
+    <div class="toolbar-panel statistics-inline-filter">
+      <label class="toolbar-field" for="event-select">
+        <span class="toolbar-label">Event</span>
+        <select id="event-select" class="toolbar-select" title="Filter survey stats and table by anomaly event type.">
+          <option value="all">All events</option>
+        </select>
+      </label>
     </div>
-
     <div class="section-label">Resources collected</div>
     <div class="stats" id="stats-collected"></div>
 
@@ -140,6 +153,7 @@
 
     <div class="section-label">Net gain (collected − ship costs − fuel)</div>
     <div class="stats" id="stats-net"></div>
+    </section>
 
     <div class="charts">
       <div class="chart-box">
@@ -153,13 +167,13 @@
     </div>
 
     <div class="charts">
-      <div class="chart-box" style="grid-column: 1 / -1;">
+      <div class="chart-box chart-box-full-width">
         <h2>Resources by event type</h2>
         <canvas id="chart-by-event"></canvas>
       </div>
     </div>
 
-    <div class="reports-section">
+    <div class="reports-section statistics-list-panel">
       <div class="reports-header">
         <h2>Recent Reports</h2>
         <div class="pagination">
@@ -193,7 +207,8 @@
     </div>
   </div>
 
-  <div id="pirates-content" style="display:none;">
+  <div id="pirates-content" class="statistics-dashboard statistics-split-layout" style="display:none;">
+    <section class="statistics-summary-panel">
     <div class="section-label">Loot collected</div>
     <div class="stats" id="p-stats-collected"></div>
 
@@ -208,6 +223,7 @@
 
     <div class="section-label">Debris fields generated</div>
     <div class="stats" id="p-stats-debris"></div>
+    </section>
 
     <div class="charts">
       <div class="chart-box">
@@ -220,7 +236,7 @@
       </div>
     </div>
 
-    <div class="reports-section">
+    <div class="reports-section statistics-list-panel">
       <div class="reports-header">
         <h2>Recent Raids</h2>
         <div class="pagination">
@@ -255,7 +271,8 @@
     </div>
   </div>
 
-  <div id="mining-content" style="display:none;">
+  <div id="mining-content" class="statistics-dashboard statistics-split-layout" style="display:none;">
+    <section class="statistics-summary-panel">
     <div class="section-label">Resources delivered</div>
     <div class="stats" id="m-stats-delivered"></div>
 
@@ -270,6 +287,7 @@
 
     <div class="section-label" id="m-net-label">Net gain (delivered − ship costs − fuel, all time)</div>
     <div class="stats" id="m-stats-net"></div>
+    </section>
 
     <div class="charts">
       <div class="chart-box">
@@ -282,7 +300,7 @@
       </div>
     </div>
 
-    <div class="reports-section">
+    <div class="reports-section statistics-list-panel">
       <div class="reports-header">
         <h2>Recent Deliveries</h2>
         <div class="pagination">
@@ -317,9 +335,46 @@
     </div>
   </div>
 
-  <div id="battles-content" style="display:none;"></div>
+  <div id="battles-content" class="statistics-dashboard statistics-split-layout" style="display:none;">
+    <section class="statistics-summary-panel">
+    <div id="battles-controls" class="toolbar-panel statistics-inline-filter">
+      <label class="toolbar-field">
+        <span class="toolbar-label">Source</span>
+        <select id="battles-source" class="toolbar-select"></select>
+      </label>
+    </div>
+    <div class="section-label">Combat</div>
+    <div class="stats" id="b-stats-combat"></div>
 
-  <div id="debris-content" style="display:none;">
+    <div class="section-label">Debris salvaged</div>
+    <div class="stats" id="b-stats-debris"></div>
+
+    <div class="section-label">Raid pillage</div>
+    <div class="stats" id="b-stats-pillage"></div>
+
+    <div class="section-label">Net (won - ship-loss cost)</div>
+    <div class="stats" id="b-stats-net"></div>
+    </section>
+
+    <div class="reports-section statistics-list-panel">
+      <div class="reports-header">
+        <h2>Recent battles</h2>
+        <button id="b-export" type="button">Export CSV</button>
+        <div class="pagination">
+          <button id="b-btn-prev" type="button">&lt; Prev</button>
+          <span id="b-page-info">Page 1</span>
+          <button id="b-btn-next" type="button">Next &gt;</button>
+        </div>
+      </div>
+      <table>
+        <thead id="b-reports-head"></thead>
+        <tbody id="b-reports-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="debris-content" class="statistics-dashboard statistics-split-layout" style="display:none;">
+    <section class="statistics-summary-panel">
     <div class="section-label">Collected by your fleets (precise — from returning collect-debris missions)</div>
     <div class="stats" id="d-stats-mine"></div>
 
@@ -328,6 +383,7 @@
 
     <div class="section-label">Ships lost to ambushes (build cost)</div>
     <div class="stats" id="d-stats-lost"></div>
+    </section>
 
     <div class="charts">
       <div class="chart-box">
@@ -340,7 +396,7 @@
       </div>
     </div>
 
-    <div class="reports-section">
+    <div class="reports-section statistics-list-panel">
       <div class="reports-header"><h2>Active debris runs</h2></div>
       <table>
         <thead>
@@ -353,7 +409,7 @@
       </table>
     </div>
 
-    <div class="reports-section">
+    <div class="reports-section statistics-list-panel">
       <div class="reports-header"><h2>Recent debris collections</h2></div>
       <table>
         <thead id="d-collected-head">
@@ -378,9 +434,9 @@
 
   </div>
 
-  <div id="expeditions-content" style="display:none;">
+  <div id="expeditions-content" class="expeditions-dashboard statistics-split-layout" style="display:none;">
     <div class="expert-only">
-      <div class="finder-controls">
+      <div class="toolbar-panel expeditions-launch-toolbar">
         <label>Launch From
           <select id="e-launch-planet"></select>
         </label>
@@ -404,28 +460,33 @@
           </select>
         </label>
         <label>Depth
-          <input id="e-launch-depth" type="number" min="1" max="5" value="1" style="width:56px;">
+          <input id="e-launch-depth" class="expedition-depth-input" type="number" min="1" max="5" value="1">
         </label>
-        <button id="e-launch-btn">Launch Expedition</button>
-        <span id="e-launch-status" style="color:#8b949e; font-size:0.8rem;"></span>
-        <span id="e-launch-active" style="margin-left:auto; color:#8b949e; font-size:0.8rem;" title="Max 2 expeditions in flight at once"></span>
+        <button id="e-launch-btn" class="toolbar-button primary-button">Launch Expedition</button>
+        <span id="e-launch-status" class="expeditions-launch-status"></span>
+        <span id="e-launch-active" class="expeditions-launch-active" title="Max 2 expeditions in flight at once"></span>
       </div>
-      <div id="e-launch-avail" style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; color:#8b949e; font-size:0.85rem; margin-bottom:8px;"></div>
+      <div id="e-launch-avail" class="expeditions-availability"></div>
     </div>
 
-    <div class="reports-section">
+    <div class="reports-section mission-panel">
       <div class="reports-header">
         <h2>Expedition fleets in transit</h2>
-        <span id="e-transit-count" style="color:#8b949e; font-size:0.8rem;"></span>
+        <span id="e-transit-count" class="mission-count"></span>
       </div>
-      <div id="e-transit-list" style="display:flex; flex-direction:column; gap:10px;"></div>
+      <div id="e-transit-list" class="sc-transit-list"></div>
     </div>
 
+  </div>
+
+  <div id="expeditions-stats-content" class="statistics-dashboard statistics-split-layout" style="display:none;">
+    <section class="statistics-summary-panel">
     <div class="section-label">Loot collected — expeditions</div>
     <div class="stats" id="e-stats-collected"></div>
 
     <div class="section-label">Ships lost to encounters (build cost)</div>
     <div class="stats" id="e-stats-lost"></div>
+    </section>
 
     <div class="charts">
       <div class="chart-box">
@@ -438,7 +499,7 @@
       </div>
     </div>
 
-    <div class="reports-section">
+    <div class="reports-section statistics-list-panel">
       <div class="reports-header">
         <h2>Recent Missions</h2>
         <div class="pagination">
@@ -471,19 +532,22 @@
     </div>
   </div>
 
-  <div id="wormholes-content" style="display:none;">
-    <div class="controls" style="margin-top:0;">
-      <label for="wclass-select">Wormhole class:</label>
-      <select id="wclass-select" title="Filter wormhole runs by wormhole class.">
-        <option value="all">All classes</option>
-      </select>
+  <div id="wormholes-content" class="statistics-dashboard statistics-split-layout" style="display:none;">
+    <section class="statistics-summary-panel">
+    <div class="toolbar-panel statistics-inline-filter">
+      <label class="toolbar-field" for="wclass-select">
+        <span class="toolbar-label">Wormhole class</span>
+        <select id="wclass-select" class="toolbar-select" title="Filter wormhole runs by wormhole class.">
+          <option value="all">All classes</option>
+        </select>
+      </label>
     </div>
-
     <div class="section-label">Loot collected — wormhole runs</div>
     <div class="stats" id="w-stats-collected"></div>
 
     <div class="section-label">Ships lost to encounters (build cost)</div>
     <div class="stats" id="w-stats-lost"></div>
+    </section>
 
     <div class="charts">
       <div class="chart-box">
@@ -496,7 +560,7 @@
       </div>
     </div>
 
-    <div class="reports-section">
+    <div class="reports-section statistics-list-panel">
       <div class="reports-header">
         <h2>Recent Runs</h2>
         <div class="pagination">
@@ -530,21 +594,19 @@
     </div>
   </div>
 
-  <div id="finder-content" style="display:none;">
-    <div class="finder-controls">
-      <label>Origin
-        <select id="f-origin"></select>
+  <div id="finder-content" class="finder-dashboard" style="display:none;">
+    <div class="toolbar-panel finder-toolbar">
+      <label class="toolbar-field">Origin
+        <select id="f-origin" class="toolbar-select"></select>
       </label>
-      <label>Arm
-        <select id="f-arm"></select>
+      <label class="toolbar-field">Arm
+        <select id="f-arm" class="toolbar-select"></select>
       </label>
-      <label>Sector
-        <input id="f-sector" type="text" placeholder="35 or 33-35" style="width:90px;
-               background:#21262d; border:1px solid #30363d; color:#e6edf3;
-               padding:4px 8px; border-radius:6px; font-size:0.85rem;" />
+      <label class="toolbar-field">Sector
+        <input id="f-sector" class="toolbar-input finder-sector-input" type="text" placeholder="35 or 33-35" />
       </label>
-      <label>Type
-        <select id="f-type">
+      <label class="toolbar-field">Type
+        <select id="f-type" class="toolbar-select">
           <option value="">any</option>
           <option value="ancient">ancient</option>
           <option value="crystalline">crystalline</option>
@@ -556,47 +618,54 @@
           <option value="volcanic">volcanic</option>
         </select>
       </label>
-      <label>Min size
-        <input id="f-min-size" type="number" min="0" value="0" />
+      <label class="toolbar-field">Min size
+        <input id="f-min-size" class="toolbar-input" type="number" min="0" value="0" />
       </label>
-      <label>Max size
-        <input id="f-max-size" type="number" min="0" placeholder="∞" />
+      <label class="toolbar-field">Max size
+        <input id="f-max-size" class="toolbar-input" type="number" min="0" placeholder="∞" />
       </label>
-      <label>Min moons
-        <input id="f-min-moons" type="number" min="0" value="0" />
+      <label class="toolbar-field">Min moons
+        <input id="f-min-moons" class="toolbar-input" type="number" min="0" value="0" />
       </label>
-      <label>Temp ≥
-        <input id="f-temp-min" type="number" placeholder="−∞" />
+      <label class="toolbar-field">Temp ≥
+        <input id="f-temp-min" class="toolbar-input" type="number" placeholder="−∞" />
       </label>
-      <label>Temp ≤
-        <input id="f-temp-max" type="number" placeholder="∞" />
+      <label class="toolbar-field">Temp ≤
+        <input id="f-temp-max" class="toolbar-input" type="number" placeholder="∞" />
       </label>
-      <label>Zone
-        <select id="f-zone">
+      <label class="toolbar-field">Zone
+        <select id="f-zone" class="toolbar-select">
           <option value="">any</option>
         </select>
       </label>
-      <label>Ownership
-        <select id="f-ownership">
+      <label class="toolbar-field">Ownership
+        <select id="f-ownership" class="toolbar-select">
           <option value="">any</option>
           <option value="unowned" selected>unowned only</option>
           <option value="owned">owned only</option>
         </select>
       </label>
-      <label style="flex-direction:row; gap:5px;">
+      <label class="finder-checkbox-field">
         <input id="f-exclude-mine" type="checkbox" />Exclude mine
       </label>
-      <button id="f-search">Search</button>
-      <button id="f-export" title="Save your scanned planet data to a file to share" style="display:none;">Export galaxy</button>
-      <button id="f-import" title="Merge scanned planet data from a shared file" style="display:none;">Import galaxy</button>
+      <div class="finder-actions">
+        <button id="f-search" class="toolbar-button primary-button">Search</button>
+        <button id="f-export" class="toolbar-button secondary-button" title="Save your scanned planet data to a file to share" style="display:none;">Export galaxy</button>
+        <button id="f-import" class="toolbar-button secondary-button" title="Merge scanned planet data from a shared file" style="display:none;">Import galaxy</button>
+      </div>
       <input id="f-import-file" type="file" accept="application/json,.json" style="display:none" />
-      <span id="f-progress" style="color:#8b949e; font-size:0.8rem;"></span>
+      <span id="f-progress" class="finder-status"></span>
     </div>
 
-    <div class="reports-section">
+    <div class="dashboard-panel finder-map-panel">
+      <canvas id="f-map" width="1100" height="640"></canvas>
+      <div id="f-tooltip" class="finder-tooltip"></div>
+    </div>
+
+    <div class="reports-section statistics-list-panel finder-results-panel">
       <div class="reports-header">
         <h2>Matches</h2>
-        <span id="f-match-count" style="color:#8b949e; font-size:0.8rem;"></span>
+        <span id="f-match-count" class="finder-match-count"></span>
       </div>
       <table>
         <thead id="f-results-head">
@@ -621,15 +690,10 @@
       </table>
     </div>
 
-    <div class="chart-box" style="position:relative; margin-top:20px;">
-      <canvas id="f-map" width="1100" height="640" style="width:100%; max-height:none; cursor:crosshair;"></canvas>
-      <div id="f-tooltip" style="display:none; position:absolute; background:#161b22; border:1px solid #30363d;
-           border-radius:6px; padding:6px 10px; font-size:0.75rem; pointer-events:none; z-index:10;"></div>
-    </div>
   </div>
 
-  <div id="asteroids-content" style="display:none;">
-    <div class="finder-controls">
+  <div id="asteroids-content" class="asteroids-dashboard" style="display:none;">
+    <div class="toolbar-panel asteroids-toolbar">
       <label>Mining From :
         <select id="af-planet"></select>
       </label>
@@ -643,22 +707,21 @@
         <input id="af-left-min" type="number" min="0" max="100" placeholder="0" />
       </label>
       <label>Nearest systems
-        <input id="af-near" type="number" min="1" max="500" value="25" style="width:70px;
-               background:#21262d; border:1px solid #30363d; color:#e6edf3;
-               padding:4px 8px; border-radius:6px; font-size:0.85rem;" />
+        <input id="af-near" class="asteroids-near-input" type="number" min="1" max="500" value="25" />
       </label>
       <label>Type
-        <span id="af-type" class="res-icons" style="grid-template-columns: repeat(6, auto);"></span>
+        <span id="af-type" class="res-icons asteroids-type-icons"></span>
       </label>
       <label>Zone
-        <span id="af-zone" style="display:flex; gap:4px;"></span>
+        <span id="af-zone" class="asteroids-zone-toggles"></span>
       </label>
-      <button id="af-scan">Scan</button>
-      <span id="af-progress" style="color:#8b949e; font-size:0.8rem;"></span>
-      <span id="af-slots" style="margin-left:auto; color:#8b949e; font-size:0.8rem;" title="Fleet slots in use"></span>
+      <div class="asteroids-action-group">
+        <button id="af-scan" class="asteroids-action-button">Scan</button>
+        <span id="af-slots" title="Fleet slots in use"></span>
+      </div>
     </div>
 
-    <div class="finder-controls" id="af-livesearch" style="margin-top:0; border-top:1px solid #30363d; padding-top:10px;">
+    <div class="toolbar-panel asteroids-toolbar" id="af-livesearch">
       <label title="Background scan every 5 min; notifies on a new match even when this tab or the browser isn't focused.">Live Search :
         <select id="ls-planet"></select>
       </label>
@@ -672,41 +735,42 @@
         <input id="ls-left-min" type="number" min="0" max="100" placeholder="0" />
       </label>
       <label>Nearest systems
-        <input id="ls-near" type="number" min="1" max="500" value="25" style="width:70px;
-               background:#21262d; border:1px solid #30363d; color:#e6edf3;
-               padding:4px 8px; border-radius:6px; font-size:0.85rem;" />
+        <input id="ls-near" class="asteroids-near-input" type="number" min="1" max="500" value="25" />
       </label>
       <label>Type
-        <span id="ls-type" class="res-icons" style="grid-template-columns: repeat(6, auto);"></span>
+        <span id="ls-type" class="res-icons asteroids-type-icons"></span>
       </label>
       <label>Zone
-        <span id="ls-zone" style="display:flex; gap:4px;"></span>
+        <span id="ls-zone" class="asteroids-zone-toggles"></span>
       </label>
-      <button id="ls-search">Live Search</button>
-      <span id="ls-status" style="color:#8b949e; font-size:0.8rem;"></span>
+      <div class="asteroids-action-group">
+        <button id="ls-search" class="asteroids-action-button">Live Search</button>
+      </div>
     </div>
 
-    <div class="finder-controls expert-only" id="af-template" style="margin-top:0;">
+    <div class="toolbar-panel asteroids-toolbar expert-only" id="af-template">
       <label>Fleet template
         <select id="af-template-select"></select>
       </label>
-      <label style="flex-direction:row; gap:5px;" title="Include an Excavator: +20% fleet extraction capacity in the ship recommendation">
+      <label class="asteroids-checkbox-field" title="Include an Excavator: +20% fleet extraction capacity in the ship recommendation">
         <input id="af-excavator" type="checkbox" />Excavator +20%
       </label>
-      <span style="color:#8b949e; font-size:0.8rem;">🚀 on a row opens the fleet editor seeded from the ship recommendation. Edit templates in the Fleets tab.</span>
+      <span class="asteroids-template-note">🚀 on a row opens the fleet editor seeded from the ship recommendation. Edit templates in the Fleets tab.</span>
     </div>
 
-    <div class="reports-section">
+    <div class="reports-section mission-panel statistics-list-panel asteroids-results-panel">
       <div class="reports-header">
         <h2>Asteroid fields</h2>
-        <span id="af-count" style="color:#8b949e; font-size:0.8rem;"></span>
+        <span id="af-count" class="asteroids-count"></span>
+        <span id="af-progress" class="asteroids-results-status"></span>
+        <span id="ls-status" class="asteroids-results-status"></span>
         <div class="pagination">
           <button id="af-btn-prev">← Prev</button>
           <span id="af-page-info">Page 1</span>
           <button id="af-btn-next">Next →</button>
         </div>
       </div>
-      <div id="af-avail" style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; color:#8b949e; font-size:0.85rem; margin-bottom:8px;"></div>
+      <div id="af-avail" aria-hidden="true"></div>
       <table>
         <thead id="af-results-head">
           <tr>
@@ -729,187 +793,160 @@
   </div>
 
   <div id="scouting-content" style="display:none;">
-    <div class="finder-controls">
-      <label>Survey From
-        <select id="sc-planet"></select>
-      </label>
-      <label>Zone
-        <span id="sc-zone" style="display:flex; gap:4px;"></span>
-      </label>
-      <label>Probe template
-        <select id="sc-scan-template"></select>
-      </label>
-      <button id="sc-scan">Launch Scan</button>
-      <label style="display:flex; align-items:center; gap:7px; font-size:0.8rem; color:#8b949e;">
-          <span style="font-size:0.9rem; color:#8b949e;">Max Fleets</span>
-          <input type="number" id="sc-max-missions" min="1" step="1" value="1" title="Max Auto Fleets per type (Scan/Investigation/Salvage)" style="width:6rem; margin-left:8px; padding:2px 6px;">
-      </label>
-      <label style="display:flex; align-items:center; gap:7px; font-size:0.8rem; color:#8b949e; margin-left:16px;">
-          <span style="font-size:0.9rem; color:#8b949e;">Reserved Fleets</span>
-          <input type="number" id="sc-slot-reserve" min="0" step="1" value="0" title="Number of fleet slots to keep free for other activity" style="width:6rem; margin-left:8px; padding:2px 6px;">
-      </label>
-      <span id="sc-progress" style="color:#8b949e; font-size:0.8rem;"></span>
-      <span id="sc-slots" style="margin-left:auto; color:#8b949e; font-size:0.8rem;" title="Fleet slots in use"></span>
-    </div>
-
-    <div class="reports-section">
-      <div class="reports-header">
-        <h2>Scanning fleets in transit</h2>
-        <span id="sc-transit-count" style="color:#8b949e; font-size:0.8rem;"></span>
-      </div>
-      <div>
-      <div style="display:flex; align-items:center; gap:7px; font-size:0.8rem; color:#8b949e;">
-        <input type="checkbox" id="sc-auto" class="m-switch" title="Automate scouting">
-        <span>Automate Scouting</span>
-        <span id="sc-auto-status" style="margin-left:8px; font-size:0.75rem; color:#8b949e;">Status: -</span>
-      </div>
-      <br>
-    </div>
-      <div id="sc-transit-list" style="display:flex; flex-direction:column; gap:10px;"></div>
-    </div>
-
-    <div class="reports-section">
-      <div class="reports-header">
-        <h2>Active surveys (awaiting investigation)</h2>
-        <span id="sc-count" style="color:#8b949e; font-size:0.8rem;"></span>
-        <label style="margin-left:auto; color:#8b949e; font-size:0.85rem;">Investigate template
-          <select id="sc-inv-template"></select>
+    <div class="toolbar-panel scouting-toolbar-panel">
+      <div class="toolbar-row toolbar-row-main">
+        <label class="toolbar-field">
+          <span class="toolbar-label">Survey From</span>
+          <select id="sc-planet" class="toolbar-select"></select>
         </label>
-        <button id="sc-refresh">Refresh</button>
+        <label class="toolbar-field">
+          <span class="toolbar-label">Zone</span>
+          <span id="sc-zone" class="toolbar-zone-group"></span>
+        </label>
       </div>
-    <div>
-      <div style="display:flex; align-items:center; gap:7px; font-size:0.8rem; color:#8b949e;">
-        <input type="checkbox" id="sc-investigate-auto" class="m-switch" title="Automate investigation">
-        <span style="user-select:none;">Automate Investigation</span>
-        <span id="sc-investigate-status" style="margin-left:8px; font-size:0.75rem; color:#8b949e;">Status: -</span>
+
+      <div class="toolbar-row toolbar-row-command">
+        <label class="toolbar-field">
+          <span class="toolbar-label">Probe template</span>
+          <select id="sc-scan-template" class="toolbar-select"></select>
+        </label>
+        <div class="toolbar-actions">
+          <button id="sc-scan" class="toolbar-button primary-button">Launch Scan</button>
+          <button id="sc-refresh" type="button" class="toolbar-button secondary-button">Refresh</button>
+        </div>
+        <label class="toolbar-field">
+          <span class="toolbar-label">Investigate template</span>
+          <select id="sc-inv-template" class="toolbar-select"></select>
+        </label>
+        <div class="toolbar-collect-group">
+          <span class="toolbar-label">Collect with:</span>
+          <span id="sc-debris-ships" class="toolbar-chip-row"></span>
+        </div>
+        <label class="toolbar-field toolbar-reserve-field">
+          <span class="toolbar-label">Reserved Fleets</span>
+          <input type="number" id="sc-slot-reserve" class="toolbar-input compact-input" min="0" step="1" value="0" title="Number of fleet slots to keep free for other activity">
+        </label>
       </div>
-    <br>
-    </div>
-      <div id="sc-inv-avail" style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; color:#8b949e; font-size:0.85rem; margin-bottom:8px;"></div>
-      <table>
-        <thead>
-          <tr>
-            <th title="Send investigation fleet"></th>
-            <th title="Fleet progress while investigating">Progress</th>
-            <th>System</th>
-            <th>Anomaly</th>
-            <th>Zone</th>
-            <th title="Hydrogen to send the selected investigate template">Fuel Cost</th>
-            <th title="One-way travel time for the selected template">Travel Time</th>
-            <th>Expires in</th>
-          </tr>
-        </thead>
-        <tbody id="sc-surveys-tbody"></tbody>
-      </table>
+
+      <div class="toolbar-row toolbar-row-meta">
+        <span id="sc-last-refresh" class="toolbar-timestamp">Last refresh: —</span>
+        <span id="sc-progress" class="toolbar-meta-text"></span>
+        <span id="sc-slots" class="toolbar-meta-text toolbar-meta-text-right" title="Fleet slots in use"></span>
+      </div>
     </div>
 
-    <div class="reports-section">
+    <div class="reports-section mission-panel">
       <div class="reports-header">
-        <h2>Live debris fields</h2>
-        <span id="sc-debris-last" style="color:#8b949e; font-size:0.8rem;"></span>
-        <span id="sc-debris-zone" style="display:flex; gap:4px; margin-left:12px;"></span>
-        <label style="display:flex; align-items:center; gap:7px; font-size:0.8rem; color:#8b949e; margin-left:12px;">
+        <h2>Scans</h2>
+        <span id="sc-transit-count" class="sc-transit-count"></span>
+      </div>
+      <div class="panel-toolbar">
+        <input type="checkbox" id="sc-auto" class="m-switch" title="Automate scouting">
+        <span class="panel-toolbar-label">Automate Scouting</span>
+        <label class="panel-toolbar-field" title="Maximum number of scanning fleets">Max fleets
+          <input type="number" id="sc-max-scan" class="panel-toolbar-input" min="1" step="1" value="1">
+        </label>
+        <span id="sc-auto-status" class="panel-toolbar-status">Status: -</span>
+      </div>
+      <div id="sc-transit-list" class="sc-transit-list"></div>
+    </div>
+
+    <div class="reports-section mission-panel">
+      <div class="reports-header">
+        <h2>Surveys</h2>
+        <span id="sc-count" class="sc-count"></span>
+      </div>
+      <div class="panel-toolbar">
+        <input type="checkbox" id="sc-investigate-auto" class="m-switch" title="Automate investigation">
+        <span class="panel-toolbar-label">Automate Investigation</span>
+        <label class="panel-toolbar-field" title="Maximum number of investigation fleets">Max fleets
+          <input type="number" id="sc-max-investigate" class="panel-toolbar-input" min="1" step="1" value="1">
+        </label>
+        <span id="sc-investigate-status" class="panel-toolbar-status">Status: -</span>
+      </div>
+      <div id="sc-surveys-list" class="sc-inv-list"></div>
+    </div>
+
+    <div class="reports-section mission-panel">
+      <div class="reports-header">
+        <h2>Debris fields</h2>
+        <span id="sc-debris-zone" class="sc-debris-zone-filters"></span>
+        <label class="sc-debris-filter-toggle">
           <input type="checkbox" id="sc-debris-invonly" class="m-switch" title="Show only debris in systems you've investigated before.">
           Investigated only
         </label>
-        <label style="display:flex; align-items:center; gap:7px; font-size:0.8rem; color:#8b949e; margin-left:12px;">
+        <label class="sc-debris-filter-toggle">
           <input type="checkbox" id="sc-debris-nearest" class="m-switch" title="Collect from your nearest owned planet per field instead of the selected planet.">
           Nearest planet
         </label>
-        <span style="margin-left:auto; color:#8b949e; font-size:0.85rem;">Collect with:</span>
-        <span id="sc-debris-ships" style="display:flex; gap:6px; align-items:center;"></span>
-        <button id="sc-debris-hidden" style="display:none;"></button>
-        <button id="sc-debris-refresh">Refresh</button>
+        <button id="sc-debris-hidden" class="sc-hidden-button"></button>
       </div>
-      <div id="sc-debris-avail" style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; color:#8b949e; font-size:0.85rem; margin-bottom:8px;"></div>
-      <table>
-        <thead id="sc-debris-head">
-          <tr>
-            <th title="Send collection fleet"></th>
-            <th title="Fleet progress while collecting">Progress</th>
-            <th class="sortable" data-key="system">System</th>
-            <th class="sortable" data-key="zone">Zone</th>
-            <th class="sortable" data-key="ore">Ore</th>
-            <th class="sortable" data-key="silicates">Silicates</th>
-            <th class="sortable" data-key="alloys">Alloys</th>
-            <th class="sortable" data-key="total" title="Ore + silicates + alloys">Total</th>
-            <th title="Ships needed to collect it all with the selected types">Number of Ships</th>
-            <th title="Hydrogen to send the selected collect template">Fuel Cost</th>
-            <th title="One-way travel time for the planned fleet">Travel Time</th>
-            <th title="Hide/unhide row"></th>
-          </tr>
-        </thead>
-        <tbody id="sc-debris-tbody"></tbody>
-      </table>
+      <div class="panel-toolbar">
+        <input type="checkbox" id="sc-debris-auto" class="m-switch" title="Automate debris collection">
+        <span class="panel-toolbar-label">Automate Debris Collection</span>
+        <label class="panel-toolbar-field" title="Maximum number of debris collection fleets">Max fleets
+          <input type="number" id="sc-max-debris" class="panel-toolbar-input" min="1" step="1" value="1">
+        </label>
+        <label class="panel-toolbar-field" title="Minimum total resources required for automatic debris collection">Min total
+          <input type="number" id="sc-min-total-debris" class="panel-toolbar-input panel-toolbar-input-wide" min="0" step="1" value="0">
+        </label>
+        <span id="sc-debris-status" class="panel-toolbar-status">Status: -</span>
+      </div>
+      <div id="sc-debris-list" class="sc-debris-list"></div>
     </div>
 
-    <div class="reports-section">
+    <div class="reports-section mission-panel">
       <div class="reports-header">
-        <h2>Uncollected salvage</h2>
-        <span id="sc-salvage-count" style="color:#8b949e; font-size:0.8rem;"></span>
-        <span style="margin-left:auto; color:#8b949e; font-size:0.85rem;">Uses the cargo ships selected above.</span>
+        <h2>Salvage</h2>
+        <span id="sc-salvage-count" class="sc-count"></span>
       </div>
-      <div>
-
-      <div style="display:flex; align-items:center; gap:7px; font-size:0.8rem; color:#8b949e;">
+      <div class="panel-toolbar">
         <input type="checkbox" id="sc-salvage-auto" class="m-switch" title="Automate salvage collection">
-        <span>Automate Salvage Collection</span>
-        <span id="sc-salvage-status" style="margin-left:8px; font-size:0.75rem; color:#8b949e;">Status: -</span>
+        <span class="panel-toolbar-label">Automate Salvage Collection</span>
+        <label class="panel-toolbar-field" title="Maximum number of salvage fleets">Max fleets
+          <input type="number" id="sc-max-salvage" class="panel-toolbar-input" min="1" step="1" value="1">
+        </label>
+        <label class="panel-toolbar-field" title="Minimum total resources required for automatic salvage">Min total
+          <input type="number" id="sc-min-total-salvage" class="panel-toolbar-input panel-toolbar-input-wide" min="0" step="1" value="0">
+        </label>
+        <span id="sc-salvage-status" class="panel-toolbar-status">Status: -</span>
       </div>
-    <br>
-    </div>
-      <table>
-        <thead id="sc-salvage-head">
-          <tr>
-            <th title="Send collection fleet"></th>
-            <th title="Fleet progress while collecting">Progress</th>
-            <th class="sortable" data-key="system">System</th>
-            <th class="sortable" data-key="zone">Zone</th>
-            <th>Resources left</th>
-            <th class="sortable" data-key="total" title="All uncollected resources">Total</th>
-            <th title="Ships needed to collect it all with the selected types">Number of Ships</th>
-            <th title="Hydrogen to send the planned fleet">Fuel Cost</th>
-            <th title="One-way travel time for the planned fleet">Travel Time</th>
-            <th title="Salvage expiry">Expires in</th>
-          </tr>
-        </thead>
-        <tbody id="sc-salvage-tbody"></tbody>
-      </table>
+      <div id="sc-salvage-list" class="sc-salvage-list"></div>
     </div>
   </div>
 
-  <div id="xeno-content" style="display:none;">
+  <div id="xeno-content" class="xeno-dashboard statistics-split-layout" style="display:none;">
     <div class="expert-only">
-      <div class="finder-controls">
+      <div class="toolbar-panel xeno-launch-toolbar">
         <label>Survey From
           <select id="xn-planet"></select>
         </label>
         <label>Fleet template
           <select id="xn-template"></select>
         </label>
-        <button id="xn-scan">Launch Ruins Survey</button>
-        <span id="xn-progress" style="color:#8b949e; font-size:0.8rem;"></span>
-        <span id="xn-slots" style="margin-left:auto; color:#8b949e; font-size:0.8rem;" title="Fleet slots in use"></span>
+        <button id="xn-scan" class="toolbar-button primary-button">Launch Ruins Survey</button>
+        <span id="xn-progress" class="xeno-launch-status"></span>
+        <span id="xn-slots" class="xeno-launch-active" title="Fleet slots in use"></span>
       </div>
-      <div id="xn-avail" style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; color:#8b949e; font-size:0.85rem; margin-bottom:8px;"></div>
-      <div style="color:#8b949e; font-size:0.8rem; margin-bottom:8px;">
+      <div id="xn-avail" class="xeno-availability"></div>
+      <div class="xeno-launch-note">
         Finds the nearest system with an unowned Ancient moon not already targeted by an in-flight ruins survey,
         then launches one there with the selected fleet template.
       </div>
     </div>
 
-    <div class="reports-section">
+    <div class="reports-section mission-panel">
       <div class="reports-header">
         <h2>Ruins survey fleets in transit</h2>
-        <span id="xn-transit-count" style="color:#8b949e; font-size:0.8rem;"></span>
+        <span id="xn-transit-count" class="mission-count"></span>
       </div>
-      <div id="xn-transit-list" style="display:flex; flex-direction:column; gap:10px;"></div>
+      <div id="xn-transit-list" class="sc-transit-list"></div>
     </div>
 
-    <div class="reports-section">
+    <div class="reports-section mission-panel">
       <div class="reports-header">
         <h2>Moons on cooldown</h2>
-        <span id="xn-cooldown-count" style="color:#8b949e; font-size:0.8rem;"></span>
+        <span id="xn-cooldown-count" class="mission-count"></span>
       </div>
       <table>
         <thead>
@@ -923,11 +960,16 @@
       </table>
     </div>
 
+  </div>
+
+  <div id="xeno-stats-content" class="statistics-dashboard statistics-split-layout" style="display:none;">
+    <section class="statistics-summary-panel">
     <div class="section-label">Loot collected — ruins surveys</div>
     <div class="stats" id="xn-stats-collected"></div>
 
     <div class="section-label">Ships lost (build cost)</div>
     <div class="stats" id="xn-stats-lost"></div>
+    </section>
 
     <div class="charts">
       <div class="chart-box">
@@ -940,7 +982,7 @@
       </div>
     </div>
 
-    <div class="reports-section">
+    <div class="reports-section statistics-list-panel">
       <div class="reports-header">
         <h2>Ruins survey reports</h2>
         <div class="pagination">
@@ -962,56 +1004,59 @@
     </div>
   </div>
 
-  <div id="fleets-content" style="display:none;">
-    <div class="finder-controls">
-      <label>Template
-        <select id="ft-select"></select>
+  <div id="fleets-content" class="fleets-dashboard" style="display:none;">
+    <div class="toolbar-panel fleets-toolbar">
+      <label class="toolbar-field">Template
+        <select id="ft-select" class="toolbar-select"></select>
       </label>
-      <button id="ft-new">New</button>
-      <button id="ft-delete">Delete</button>
-      <label>Name
-        <input id="ft-name" type="text" style="width:160px; background:#21262d; border:1px solid #30363d;
-               color:#e6edf3; padding:4px 8px; border-radius:6px; font-size:0.85rem;" />
+      <button id="ft-new" class="toolbar-button primary-button">New</button>
+      <button id="ft-delete" class="toolbar-button secondary-button">Delete</button>
+      <label class="toolbar-field">Name
+        <input id="ft-name" class="toolbar-input fleet-name-input" type="text" />
       </label>
     </div>
 
-    <div class="fleet-box">
+    <div class="fleet-box dashboard-panel fleet-editor-panel">
       <h2 class="fleet-title attacker" id="ft-box-title">Fleet</h2>
-      <span id="ft-status" style="color:#8b949e; font-size:0.8rem;"></span>
-      <div id="ft-legend" style="display:flex; flex-wrap:wrap; gap:10px 16px; margin:6px 0 10px; font-size:0.78rem;"></div>
+      <span id="ft-status" class="fleet-status"></span>
+      <div id="ft-legend" class="fleet-legend"></div>
       <table class="fleet-table"><tbody id="ft-ships"></tbody></table>
     </div>
   </div>
 
-  <div id="market-content" style="display:none;">
-    <div class="controls" style="margin-top:0; align-items:flex-start;">
-      <div class="m-filter">
-        <label>Market:</label>
-        <span style="display:flex; align-items:center; gap:7px; font-size:0.8rem; color:#8b949e;">
-          <span>Public</span>
-          <input type="checkbox" id="m-source" class="m-switch" title="Switch between public market and alliance trade">
-          <span>Alliance</span>
-        </span>
+  <div id="market-content" class="market-dashboard" style="display:none;">
+    <div class="toolbar-panel market-toolbar">
+      <div class="market-top-row">
+        <div class="m-filter">
+          <label>Market</label>
+          <span class="market-source-toggle">
+            <span>Public</span>
+            <input type="checkbox" id="m-source" class="m-switch" title="Switch between public market and alliance trade">
+            <span>Alliance</span>
+          </span>
+        </div>
+        <div class="m-filter">
+          <label for="m-ratio-wanted">Ratio wanted ≥</label>
+          <input id="m-ratio-wanted" class="toolbar-input market-ratio-input" type="number" min="0" step="0.001" placeholder="any" />
+        </div>
+        <div class="market-actions-stack">
+          <button id="m-clear" class="toolbar-button secondary-button">Clear filters</button>
+          <button id="m-refresh" class="toolbar-button secondary-button">Refresh</button>
+        </div>
       </div>
-      <div class="m-filter" style="margin-left:12px;">
-        <label>Buy (offered):</label>
-        <span id="m-buy" class="res-icons"></span>
+      <div class="market-resource-row">
+        <div class="m-filter market-resource-filter market-buy-filter">
+          <label>Buy (offered)</label>
+          <span id="m-buy" class="res-icons"></span>
+        </div>
+        <div class="m-filter market-resource-filter market-sell-filter">
+          <label>Sell (you pay)</label>
+          <span id="m-sell" class="res-icons"></span>
+        </div>
       </div>
-      <div class="m-filter" style="margin-left:12px;">
-        <label>Sell (you pay):</label>
-        <span id="m-sell" class="res-icons"></span>
-      </div>
-      <div class="m-filter" style="margin-left:12px;">
-        <label for="m-ratio-wanted">Ratio wanted ≥</label>
-        <input id="m-ratio-wanted" type="number" min="0" step="0.001" placeholder="any"
-               style="width:80px; background:#21262d; border:1px solid #30363d; color:#e6edf3; padding:4px 8px; border-radius:6px; font-size:0.85rem;" />
-      </div>
-      <button id="m-clear" style="margin-left:12px;">Clear filters</button>
-      <button id="m-refresh" style="margin-left:12px;">Refresh</button>
-      <span id="m-progress" style="margin-left:12px; color:#8b949e; font-size:0.8rem;"></span>
     </div>
 
-    <section class="market-profit-panel">
+    <section class="market-profit-panel dashboard-panel">
       <div class="reports-header">
         <div>
           <h2>Trade history and estimated profit</h2>
@@ -1061,15 +1106,15 @@
       </div>
     </section>
 
-    <div class="reports-section">
+    <div class="reports-section statistics-list-panel market-offers-panel">
       <div class="reports-header">
         <h2>Open offers</h2>
-        <span id="m-count" style="color:#8b949e; font-size:0.8rem;"></span>
-        <span style="color:#8b949e; font-size:0.75rem; display:flex; align-items:center; gap:6px;">
+        <span id="m-count" class="market-count"></span>
+        <span class="market-deal-legend">
           Deal vs market average:
-          <span style="background:rgba(88,130,96,0.55); padding:1px 7px; border-radius:4px; color:#e6edf3;">above</span>
-          <span style="background:rgba(150,96,94,0.55); padding:1px 7px; border-radius:4px; color:#e6edf3;">below</span>
-          <span style="opacity:0.7;">deeper shade = further from the pair average (worst 5% ignored)</span>
+          <span class="market-deal-above">above</span>
+          <span class="market-deal-below">below</span>
+          <span class="market-deal-note">deeper shade = further from the pair average (worst 5% ignored)</span>
         </span>
       </div>
       <table>
@@ -1088,34 +1133,42 @@
     </div>
   </div>
 
-  <div id="techtree-content" style="display:none;">
-    <div class="controls" style="margin-top:0;">
-      <label for="tt-branch">Branch:</label>
-      <select id="tt-branch">
+  <div id="techtree-content" class="techtree-dashboard" style="display:none;">
+    <div class="toolbar-panel techtree-toolbar">
+      <label class="toolbar-field" for="tt-branch">
+        <span class="toolbar-label">Branch</span>
+        <select id="tt-branch" class="toolbar-select">
         <option value="all">All branches</option>
-      </select>
-      <button id="tt-fit">Fit width</button>
-      <input id="tt-search" type="search" placeholder="Search tech…" style="margin-left:8px;">
-      <span id="tt-summary" style="margin-left:12px; color:#8b949e; font-size:0.8rem;"></span>
+        </select>
+      </label>
+      <button id="tt-fit" class="toolbar-button secondary-button">Fit width</button>
+      <label class="toolbar-field" for="tt-search">
+        <span class="toolbar-label">Search</span>
+        <input id="tt-search" class="toolbar-input" type="search" placeholder="Search tech…">
+      </label>
+      <span id="tt-summary" class="techtree-summary"></span>
     </div>
-    <div id="tt-legend"></div>
-    <div class="tt-main">
-      <div id="techtree"></div>
-      <aside id="tt-queue">
+    <div class="dashboard-panel techtree-legend-panel">
+      <div id="tt-legend"></div>
+    </div>
+    <div class="tt-main techtree-main-panel">
+      <div class="dashboard-panel techtree-graph-panel">
+        <div id="techtree"></div>
+      </div>
+      <aside id="tt-queue" class="dashboard-panel">
         <h3>Research queue</h3>
-        <div id="tt-launch-planet" style="display:none;">
+        <div id="tt-launch-planet" class="techtree-launch-planet-hidden">
           <label for="tt-planet-select">Launch on:</label>
           <select id="tt-planet-select"></select>
         </div>
         <div id="tt-queue-list" class="tt-queue-empty">Click <b>+</b> on a tech to plan it.</div>
         <div id="tt-queue-totals"></div>
-        <button id="tt-queue-clear" style="display:none;">Clear queue</button>
+        <button id="tt-queue-clear" class="techtree-queue-clear-hidden">Clear queue</button>
       </aside>
     </div>
   </div>
 
-  <div id="storage-footer" style="margin-top:24px; padding-top:10px; border-top:1px solid #21262d;
-       color:#484f58; font-size:0.75rem;"></div>
+  <div id="storage-footer" class="storage-footer"></div>
 
   <!-- Load order: polyfill + common.js first, tabs next, orchestrator last. -->
   <script src="browser-polyfill.js"></script>

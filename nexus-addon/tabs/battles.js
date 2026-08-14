@@ -5,6 +5,7 @@
 
 import {
   PER_PAGE, fmt, escapeHtml, makeStatCard, store, zoneCell, dayKey,
+  getWindowRange, getZone,
   computeResourcesLost, combinedLost, emptyResources,
   RESOURCE_WEIGHTS, RARE_WEIGHT, EXTRA_RES_KEYS_UI,
 } from '../common.js';
@@ -58,8 +59,6 @@ function meanFuelByType(inRange) {
 
 const battleSort = { key: 'created_at', dir: -1 };
 let battleFilter = 'all';
-let battleView = 'all';                // View preset driving the Days window
-let battleFrom = '', battleTo = '';   // Days window (local day, '' = open)
 let battlePage = 1;
 const expanded = new Set();
 
@@ -344,62 +343,35 @@ function roundsBlock(rounds, youAttacker, yourFleet, enemyFleet) {
 }
 
 export function renderBattlesTab() {
-  const root = document.getElementById('battles-content');
-  root.textContent = '';
+  for (const id of ['b-stats-combat', 'b-stats-debris', 'b-stats-pillage', 'b-stats-net', 'b-reports-head', 'b-reports-tbody']) {
+    document.getElementById(id).textContent = '';
+  }
   loadShipImages();   // lazy, re-renders once images are ready
 
   const allRows = collectBattles();
 
-  // Controls — Source filter + Days period window (like Survey/Global).
+  const sourceSel = document.getElementById('battles-source');
+  sourceSel.textContent = '';
+  for (const source of ['all', ...new Set(allRows.map(r => r.source))]) {
+    const label = source === 'all' ? 'All' : source;
+    sourceSel.appendChild(new Option(label, source, source === battleFilter, source === battleFilter));
+  }
+  if (!sourceSel.dataset.bound) {
+    sourceSel.dataset.bound = 'true';
+    sourceSel.addEventListener('change', () => { battleFilter = sourceSel.value; battlePage = 1; renderBattlesTab(); });
+  }
+
+  const { from, to } = getWindowRange();
+  const selectedZone = getZone();
   const inRange = ts => {
     const d = dayKey(ts);
-    return (!battleFrom || d >= battleFrom) && (!battleTo || d <= battleTo);
+    return (!from || d >= from) && (!to || d <= to);
   };
   const view = allRows.filter(r =>
-    (battleFilter === 'all' || r.source === battleFilter) && inRange(r.created_at));
-  const windowed = !!(battleFrom || battleTo);
+    (battleFilter === 'all' || r.source === battleFilter)
+    && (selectedZone === 'all' || (r.zone || 'unknown') === selectedZone)
+    && inRange(r.created_at));
 
-  const bar = document.createElement('div');
-  bar.style.cssText = 'display:flex;align-items:center;gap:8px;margin:12px 0;flex-wrap:wrap';
-  const inputCss = 'background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:4px 8px;border-radius:6px';
-  const gray = txt => { const s = document.createElement('span'); s.style.color = '#8b949e'; s.textContent = txt; return s; };
-
-  // View preset — fills the Days window (like Global). A manual Days edit
-  // overrides it: the typed dates drive filtering, View is left untouched.
-  const viewSel = document.createElement('select');
-  viewSel.style.cssText = inputCss;
-  for (const [v, lbl] of [['all', 'All time'], ['daily', 'Daily'], ['last3', 'Last 3 days'], ['last7', 'Last 7 days'], ['last30', 'Last 30 days']]) {
-    const o = document.createElement('option'); o.value = v; o.textContent = lbl;
-    if (v === battleView) o.selected = true; viewSel.appendChild(o);
-  }
-  viewSel.addEventListener('change', () => {
-    battleView = viewSel.value;
-    const span = { last3: 3, last7: 7, last30: 30 }[battleView];
-    const now = Date.now();
-    if (battleView === 'all') { battleFrom = ''; battleTo = ''; }
-    else if (battleView === 'daily') { battleFrom = battleTo = dayKey(now); }
-    else if (span) { battleTo = dayKey(now); battleFrom = dayKey(now - (span - 1) * 86400000); }
-    battlePage = 1; renderBattlesTab();
-  });
-
-  const sel = document.createElement('select');
-  sel.style.cssText = inputCss;
-  for (const s of ['all', ...new Set(allRows.map(r => r.source))]) {
-    const o = document.createElement('option'); o.value = s; o.textContent = s === 'all' ? 'All' : s;
-    if (s === battleFilter) o.selected = true; sel.appendChild(o);
-  }
-  sel.addEventListener('change', () => { battleFilter = sel.value; battlePage = 1; renderBattlesTab(); });
-
-  const from = document.createElement('input'); from.type = 'date'; from.value = battleFrom; from.style.cssText = inputCss;
-  const to = document.createElement('input'); to.type = 'date'; to.value = battleTo; to.style.cssText = inputCss;
-  from.addEventListener('change', () => { battleFrom = from.value; battlePage = 1; renderBattlesTab(); });
-  to.addEventListener('change', () => { battleTo = to.value; battlePage = 1; renderBattlesTab(); });
-  const clr = document.createElement('button'); clr.textContent = 'Clear'; clr.style.cssText = inputCss + ';cursor:pointer';
-  clr.disabled = !windowed;
-  clr.addEventListener('click', () => { battleFrom = ''; battleTo = ''; battleView = 'all'; battlePage = 1; renderBattlesTab(); });
-
-  bar.append(gray('View:'), viewSel, gray('Source:'), sel, gray('Days:'), from, gray('→'), to, clr);
-  root.append(bar);
 
   // Resource economy across the current selection (source + window).
   const debris = emptyResources(), pillage = emptyResources(), cost = emptyResources();
@@ -448,24 +420,19 @@ export function renderBattlesTab() {
     makeStatCard('Ships damaged', fmt(view.reduce((s, r) => s + r.damaged, 0)), '', 'color:#e3b341'),
     makeStatCard('Enemies destroyed', fmt(view.reduce((s, r) => s + (r.killed || 0), 0)), '', 'color:#56d364'),
   );
-  const label = document.createElement('div');
-  label.className = 'section-label';
-  label.textContent = 'Combat' + (windowed ? ` — ${battleFrom || 'start'} → ${battleTo || 'now'}` : ' (recent records)');
-  root.append(label, cards);
+  document.getElementById('b-stats-combat').append(...cards.children);
 
   // Debris salvaged, per resource.
   const debrisLabel = document.createElement('div');
-  debrisLabel.className = 'section-label'; debrisLabel.textContent = 'Debris salvaged';
   const debrisCards = document.createElement('div'); debrisCards.className = 'stats';
   debrisCards.append(...resCards(debris, ' debris', false));
-  root.append(debrisLabel, debrisCards);
+  document.getElementById('b-stats-debris').append(...debrisCards.children);
 
   // Raid pillage (resources stolen from raided camps), per resource.
   const pillageLabel = document.createElement('div');
-  pillageLabel.className = 'section-label'; pillageLabel.textContent = 'Raid pillage';
   const pillageCards = document.createElement('div'); pillageCards.className = 'stats';
   pillageCards.append(...resCards(pillage, ' pillage', false));
-  root.append(pillageLabel, pillageCards);
+  document.getElementById('b-stats-pillage').append(...pillageCards.children);
 
   // Net (won − ship-loss cost), per resource + weighted total.
   const totalNet = weighted(net);
@@ -474,10 +441,9 @@ export function renderBattlesTab() {
   netTotalCard.title = 'Weighted: ore×1, silicates×2, hydrogen×3, alloys×5, exotics×10.'
     + (fuel ? ` Includes ${fmt(fuel)} hydrogen fuel (est.).` : '');
   const netLabel = document.createElement('div');
-  netLabel.className = 'section-label'; netLabel.textContent = 'Net (won − ship-loss cost)';
   const netCards = document.createElement('div'); netCards.className = 'stats';
   netCards.append(...resCards(net, ' net', true), netTotalCard);
-  root.append(netLabel, netCards);
+  document.getElementById('b-stats-net').append(...netCards.children);
 
   // Table.
   const sorted = sortRows(view);
@@ -489,8 +455,7 @@ export function renderBattlesTab() {
     ['created_at', 'Date'], ['source', 'Source'], ['location', 'Location'], ['zone', 'Zone'],
     ['outcome', 'Outcome'], ['lost', 'Lost'], ['damaged', 'Damaged'], ['killed', 'Enemy killed'], ['debris', 'Debris'],
   ];
-  const table = document.createElement('table');
-  const thead = document.createElement('thead');
+  const thead = document.getElementById('b-reports-head');
   const htr = document.createElement('tr');
   for (const [k, lbl] of cols) {
     const th = document.createElement('th');
@@ -502,9 +467,9 @@ export function renderBattlesTab() {
     });
     htr.appendChild(th);
   }
-  thead.appendChild(htr); table.appendChild(thead);
+  thead.appendChild(htr);
 
-  const tbody = document.createElement('tbody');
+  const tbody = document.getElementById('b-reports-tbody');
   for (const r of slice) {
     const tr = document.createElement('tr');
     tr.style.cursor = 'pointer';
@@ -543,33 +508,25 @@ export function renderBattlesTab() {
       dtr.appendChild(dtd); tbody.appendChild(dtr);
     }
   }
-  table.appendChild(tbody);
-
-  const wrap = document.createElement('div');
-  wrap.className = 'reports-section';
-  const header = document.createElement('div');
-  header.className = 'reports-header';
-  const h2 = document.createElement('h2'); h2.textContent = 'Recent battles';
-  const exportBtn = document.createElement('button');
-  exportBtn.textContent = '⭳ Export CSV';
-  exportBtn.title = 'Download the current view (all pages, current filter/range) as CSV';
-  exportBtn.disabled = !sorted.length;
-  exportBtn.addEventListener('click', () => exportBattlesCsv(sorted));
-  const pg = document.createElement('div'); pg.className = 'pagination';
-  const prev = document.createElement('button'); prev.textContent = '← Prev'; prev.disabled = battlePage <= 1;
-  const info = document.createElement('span'); info.textContent = `Page ${battlePage} / ${totalPages} (${sorted.length} total)`;
-  const next = document.createElement('button'); next.textContent = 'Next →'; next.disabled = battlePage >= totalPages;
-  prev.addEventListener('click', () => { battlePage--; renderBattlesTab(); });
-  next.addEventListener('click', () => { battlePage++; renderBattlesTab(); });
-  pg.append(prev, info, next); header.append(h2, exportBtn, pg);
-  wrap.append(header, table);
-
   if (!allRows.length) {
-    const p = document.createElement('p');
-    p.style.cssText = 'color:#484f58;padding:8px 0';
-    p.textContent = 'No battles recorded yet — click Scrape Now after a fight.';
-    root.appendChild(p);
-  } else {
-    root.appendChild(wrap);
+    const emptyRow = document.createElement('tr');
+    const emptyCell = document.createElement('td');
+    emptyCell.colSpan = cols.length;
+    emptyCell.className = 'empty-state';
+    emptyCell.textContent = 'No battles recorded yet - click Scrape Now after a fight.';
+    emptyRow.appendChild(emptyCell);
+    tbody.appendChild(emptyRow);
   }
+
+  const exportBtn = document.getElementById('b-export');
+  exportBtn.disabled = !sorted.length;
+  exportBtn.onclick = () => exportBattlesCsv(sorted);
+  const prev = document.getElementById('b-btn-prev');
+  const info = document.getElementById('b-page-info');
+  const next = document.getElementById('b-btn-next');
+  prev.disabled = battlePage <= 1;
+  info.textContent = `Page ${battlePage} / ${totalPages} (${sorted.length} total)`;
+  next.disabled = battlePage >= totalPages;
+  prev.onclick = () => { battlePage--; renderBattlesTab(); };
+  next.onclick = () => { battlePage++; renderBattlesTab(); };
 }

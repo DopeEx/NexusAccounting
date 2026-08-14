@@ -94,7 +94,7 @@ export function getXnSeriesForMode(mode) {
   return computeSeries(filterZone(store.xeno_recent_reports || []), mode, getters);
 }
 
-export function renderXenoTab() {
+export function renderXenoStatsTab() {
   const mode = getMode();
   const periodLabel = periodLabelFor(mode);
   const t = getXnTotalsForMode(mode);
@@ -103,7 +103,7 @@ export function renderXenoTab() {
   el.textContent = '';
   if (!t.missions) {
     const p = document.createElement('p');
-    p.style.cssText = 'color:#484f58;padding:8px 0';
+    p.className = 'mission-empty-state';
     p.textContent = 'No ruins survey reports recorded yet.';
     el.appendChild(p);
   } else {
@@ -283,7 +283,7 @@ function renderTransit() {
   document.getElementById('xn-transit-count').textContent = `${xnMissions.length} in flight`;
   if (!xnMissions.length) {
     const d = document.createElement('div');
-    d.style.cssText = 'color:#484f58; padding:4px 0;';
+    d.className = 'mission-empty-state';
     d.textContent = 'No ruins surveys in transit.';
     box.appendChild(d);
     return;
@@ -291,14 +291,15 @@ function renderTransit() {
   for (const m of xnMissions) {
     const target = m.targetSystemName || `#${m.targetSystemId ?? m.id}`;
     const row = document.createElement('div');
+    row.className = 'mission-transit-row';
     const head = document.createElement('div');
-    head.style.cssText = 'display:flex; align-items:baseline; gap:8px; font-size:0.85rem; margin-bottom:3px;';
+    head.className = 'mission-transit-heading';
     const name = document.createElement('span');
-    name.style.color = '#e6edf3';
+    name.className = 'mission-transit-name';
     name.textContent = `${target} · Ruins Survey`;
     head.appendChild(name);
     const bar = makeMissionBar(m);
-    bar.el.style.marginTop = '0';
+    bar.el.classList.add('mission-progress-compact');
     row.append(head, bar.el);
     box.appendChild(row);
     xnTicks.push(bar.upd);

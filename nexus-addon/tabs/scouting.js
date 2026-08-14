@@ -7,7 +7,7 @@
 // All routed through the game tab (same-origin) like the asteroid mine call.
 
 import { loadFleetTemplates } from './fleets.js';
-import { applySort, attachSortable, clearAvailStrip, confirmDialog, fmtCountdown, fuelEstimate, makeMissionBar, rememberSelection, rememberedSelections, renderAvailStrip, setStatusMessage, store, setStatusText } from '../common.js';
+import { applySort, attachSortable, confirmDialog, fmtCountdown, fuelEstimate, missionProgress, rememberSelection, rememberedSelections, setStatusMessage, store, setStatusText, ZONE_COLORS } from '../common.js';
 
 let inited = false;
 let scPlanets = [];          // [{ id, name, systemId, systemName }]
@@ -15,7 +15,6 @@ let scSystems = {};          // systemId → { x, y, name, zone }
 let scTemplates = [];
 
 const ZONES = ['sentinel', 'open', 'dead', 'rift'];
-const ZONE_COLOR = { sentinel: '#56d364', open: '#f0883e', dead: '#ff7b72', rift: '#bc8cff' };
 const scZoneFilter = new Set();   // empty = any zone
 let scPending = [];               // anomalies awaiting investigation
 let scReturning = [];             // investigated systems whose fleet is still homebound
@@ -24,14 +23,16 @@ const scJustSurveyed = new Set(); // systemIds surveyed this session — the mis
 const scJustInvestigated = new Set(); // same, for investigate missions
 let scTick = 0;
 let scMissions = [];
+let scLastRefreshAt = null;
 const maxMissions = 1; // in-flight survey/investigate/collect fleets
 let scAutoScanRunning = false;
 let scAutoInvestigateRunning = false;
 let scAutoSalvageRunning = false;
+let scAutoDebrisRunning = false;
 
 // automations are disabled when human verification is required.
 function disableAutomaticsOnHumanCheck() {
-  const ids = ['sc-auto', 'sc-investigate-auto', 'sc-salvage-auto'];
+  const ids = ['sc-auto', 'sc-investigate-auto', 'sc-debris-auto', 'sc-salvage-auto'];
   for (const id of ids) {
     const el = document.getElementById(id);
     if (!el) continue;
@@ -52,9 +53,11 @@ export function resetScoutingTab() {
   scJustInvestigated.clear();
   scTick = 0;
   scMissions = [];
+  scLastRefreshAt = null;
   scAutoScanRunning = false;
   scAutoInvestigateRunning = false;
   scAutoSalvageRunning = false;
+  scAutoDebrisRunning = false;
   scTicks.scan = [];
   scTicks.invest = [];
   scTicks.debris = [];
@@ -72,24 +75,6 @@ function findMission(type, systemId) {
   return scMissions.find(m => m.missionType === type && m.targetSystemId === systemId);
 }
 
-// A table cell holding the in-flight progress bar for this row's fleet (or a
-// muted dash when idle). Registers the bar's ticker in the given scTicks bucket.
-function progressCell(type, systemId, bucket) {
-  const td = document.createElement('td');
-  td.style.cssText = 'padding:7px 12px; min-width:150px;';
-  const m = systemId != null ? findMission(type, systemId) : null;
-  if (m) {
-    const b = makeMissionBar(m);
-    b.el.style.marginTop = '0';
-    td.appendChild(b.el);
-    scTicks[bucket].push(b.upd);
-  } else {
-    td.textContent = '—';
-    td.style.cssText += ' color:#484f58; text-align:center;';
-  }
-  return td;
-}
-
 // Scanning (survey) fleets have no table of their own, so list them here.
 // Investigate / collect_debris / collect_salvage progress is shown inline in
 // their respective tables instead.
@@ -102,25 +87,68 @@ function renderTransit() {
   document.getElementById('sc-transit-count').textContent = `${surveys.length} scanning`;
   if (!surveys.length) {
     const d = document.createElement('div');
-    d.style.cssText = 'color:#484f58; padding:4px 0;';
+    d.className = 'sc-transit-empty';
     d.textContent = 'No scanning fleets in transit.';
     box.appendChild(d);
     return;
   }
-  for (const m of surveys) {
+
+  const missionTitle = (m) => {
+    const source = m.sourceSystemName || m.sourcePlanetName || null;
     const target = m.targetSystemName || m.targetPlanetName || `#${m.targetSystemId}`;
+    return source ? `${source} → ${target}` : target;
+  };
+
+  for (const m of surveys) {
     const row = document.createElement('div');
-    const head = document.createElement('div');
-    head.style.cssText = 'display:flex; align-items:baseline; gap:8px; font-size:0.85rem; margin-bottom:3px;';
-    const name = document.createElement('span');
-    name.style.color = '#e6edf3';
-    name.textContent = `${target} · Survey`;
-    head.appendChild(name);
-    const bar = makeMissionBar(m);
-    bar.el.style.marginTop = '0';
-    row.append(head, bar.el);
+    row.className = 'sc-transit-card';
+
+    const main = document.createElement('div');
+    main.className = 'sc-mission-main sc-transit-main';
+
+    const left = document.createElement('div');
+    left.className = 'sc-transit-left';
+    const icon = document.createElement('span');
+    icon.className = 'sc-transit-icon';
+    icon.setAttribute('aria-hidden', 'true');
+
+    const text = document.createElement('div');
+    text.className = 'sc-transit-text';
+    const title = document.createElement('div');
+    title.className = 'sc-transit-title';
+    title.textContent = missionTitle(m);
+
+    const meta = document.createElement('div');
+    meta.className = 'sc-transit-meta';
+    const status = document.createElement('span');
+    status.className = 'sc-transit-status';
+    meta.append(status);
+    text.append(title, meta);
+    left.append(icon, text);
+
+    const eta = document.createElement('div');
+    eta.className = 'sc-transit-eta';
+    main.append(left, eta);
+
+    const track = document.createElement('div');
+    track.className = 'mission-progress-track sc-transit-track';
+    const fill = document.createElement('div');
+    fill.className = 'mission-progress-fill sc-transit-fill';
+    track.appendChild(fill);
+
+    row.append(main, track);
     box.appendChild(row);
-    scTicks.scan.push(bar.upd);
+
+    const upd = () => {
+      const p = missionProgress(m);
+      fill.style.width = `${(p.frac * 100).toFixed(1)}%`;
+      fill.style.background = p.gradient || p.color;
+      status.textContent = p.label;
+      status.style.color = p.color;
+      eta.textContent = p.eta > 0 ? fmtCountdown(p.eta) : '—';
+    };
+    upd();
+    scTicks.scan.push(upd);
   }
 }
 
@@ -169,24 +197,35 @@ export async function initScoutingTab() {
   });
 
   document.getElementById('sc-scan').addEventListener('click', launchScan);
-  document.getElementById('sc-refresh').addEventListener('click', loadActiveSurveys);
+  document.getElementById('sc-refresh').addEventListener('click', refreshScoutingData);
   document.getElementById('sc-planet').addEventListener('change', e => { rememberSelection('sc-planet', e.target.value); renderSurveys(); computeDebrisFuel(); computeSalvageFuel(); updateAvail(); });
 
   document.getElementById('sc-scan-template').addEventListener('change', e => rememberSelection('sc-scan-template', e.target.value));
   document.getElementById('sc-inv-template').addEventListener('change', e => { rememberSelection('sc-inv-template', e.target.value); computeFuel(); });
-  document.getElementById('sc-debris-refresh').addEventListener('click', loadDebris);
   document.getElementById('sc-debris-hidden').addEventListener('click', () => { scShowHidden = !scShowHidden; renderDebris(); });
   document.getElementById('sc-debris-invonly').addEventListener('change', e => { scInvestigatedOnly = e.target.checked; renderDebris(); });
   document.getElementById('sc-debris-nearest').checked = savedSel['sc-debris-nearest'] === true;
   document.getElementById('sc-debris-nearest').addEventListener('change', e => { rememberSelection('sc-debris-nearest', e.target.checked); computeDebrisFuel(); });
+  document.getElementById('sc-debris-auto').checked = savedSel['sc-debris-auto'] === true;
+  document.getElementById('sc-debris-auto').addEventListener('change', e => { rememberSelection('sc-debris-auto', e.target.checked); });
   document.getElementById('sc-auto').checked = savedSel['sc-auto'] === true;
   document.getElementById('sc-auto').addEventListener('change', e => { rememberSelection('sc-auto', e.target.checked); });
   document.getElementById('sc-investigate-auto').checked = savedSel['sc-investigate-auto'] === true;
   document.getElementById('sc-investigate-auto').addEventListener('change', e => { rememberSelection('sc-investigate-auto', e.target.checked); });
   document.getElementById('sc-salvage-auto').checked = savedSel['sc-salvage-auto'] === true;
   document.getElementById('sc-salvage-auto').addEventListener('change', e => { rememberSelection('sc-salvage-auto', e.target.checked); });
-  document.getElementById('sc-max-missions').value = savedSel['sc-max-missions'] || 1;
-  document.getElementById('sc-max-missions').addEventListener('change', e => { rememberSelection('sc-max-missions', e.target.value); });
+  for (const type of ['scan', 'investigate', 'salvage', 'debris']) {
+    const id = `sc-max-${type}`;
+    const input = document.getElementById(id);
+    input.value = savedSel[id] || 1;
+    input.addEventListener('change', e => { rememberSelection(id, e.target.value); });
+  }
+  for (const type of ['salvage', 'debris']) {
+    const id = `sc-min-total-${type}`;
+    const input = document.getElementById(id);
+    input.value = savedSel[id] ?? 0;
+    input.addEventListener('change', e => { rememberSelection(id, e.target.value); });
+  }
   document.getElementById('sc-slot-reserve').value = savedSel['sc-slot-reserve'] || 0;
   document.getElementById('sc-slot-reserve').addEventListener('change', e => { rememberSelection('sc-slot-reserve', e.target.value); });
 
@@ -200,21 +239,39 @@ export async function initScoutingTab() {
     tickTimers();
     for (const k in scTicks) for (const upd of scTicks[k]) upd();   // advance all progress bars
     if (++scTick % 10 === 0) updateAvail();       // catch returning fleets
-    if (scTick % 15 === 0 && document.getElementById('sc-auto')?.checked) automateScouting();
     if (scTick % 15 === 0 && document.getElementById('sc-investigate-auto')?.checked) automateInvestigate();
+    if (scTick % 15 === 0 && document.getElementById('sc-debris-auto')?.checked) automateDebris();
     if (scTick % 15 === 0 && document.getElementById('sc-salvage-auto')?.checked) automateSalvage();
-    if (scTick % 30 === 0) { loadActiveSurveys(); loadDebris(); }   // refresh the list every 30s
+    if (scTick % 15 === 0 && document.getElementById('sc-auto')?.checked) automateScouting();
+    if (scTick % 30 === 0) { void refreshScoutingData(); }   // refresh the list every 30s
   }, 1000);
 
   setStatusText(status, '');
-  loadActiveSurveys();
-  loadDebris();
+  refreshScoutingData();
 }
 
-function getMaxMissions() {
-  const el = document.getElementById('sc-max-missions');
+function setLastRefreshTimestamp() {
+  const el = document.getElementById('sc-last-refresh');
+  if (!el) return;
+  el.textContent = scLastRefreshAt ? `Last refresh: ${new Date(scLastRefreshAt).toLocaleString()}` : 'Last refresh: —';
+}
+
+async function refreshScoutingData() {
+  await Promise.allSettled([loadActiveSurveys(), loadDebris()]);
+  scLastRefreshAt = Date.now();
+  setLastRefreshTimestamp();
+}
+
+function getMaxMissions(type) {
+  const el = document.getElementById(`sc-max-${type}`);
   const value = el ? Number(el.value) : NaN;
   return Number.isInteger(value) && value > 0 ? value : maxMissions;
+}
+
+function getMinResourceTotal(type) {
+  const el = document.getElementById(`sc-min-total-${type}`);
+  const value = el ? Number(el.value) : NaN;
+  return Number.isInteger(value) && value >= 0 ? value : 0;
 }
 
 function getReservedFleetSlots() {
@@ -236,7 +293,7 @@ function reservedSlotMessage() {
 async function automateScouting() {
   if (scAutoScanRunning) return;
   scAutoScanRunning = true;
-  let maxScanCount = getMaxMissions(); // default max in-flight survey fleets
+  let maxScanCount = getMaxMissions('scan'); // default max in-flight survey fleets
   try {
     const status = document.getElementById('sc-auto-status');
     // Check salvage count - pause if too many pending salvage entries
@@ -257,6 +314,14 @@ async function automateScouting() {
 
     if (salvagePending > 10) {
       setStatusText(status, `Paused: too many salvage entries to collect (${salvagePending} > 10).`);
+      return;
+    }
+
+    const investigatePending = (res.reports || [])
+      .filter(r => !r.investigated && (!r.anomalyExpiresAt || new Date(r.anomalyExpiresAt) > now))
+      .length;
+    if (investigatePending > 10) {
+      setStatusText(status, `Paused: too many anomaly reports to investigate (${investigatePending} > 10).`);
       return;
     }
 
@@ -304,7 +369,7 @@ async function automateScouting() {
 async function automateInvestigate() {
   if (scAutoInvestigateRunning) return;
   scAutoInvestigateRunning = true;
-  let maxInvCount = getMaxMissions(); // default max in-flight investigate fleets
+  let maxInvCount = getMaxMissions('investigate'); // default max in-flight investigate fleets
   try {
     const status = document.getElementById('sc-investigate-status');
     const [mi, res] = await Promise.all([
@@ -353,7 +418,8 @@ async function automateInvestigate() {
 async function automateSalvage() {
   if (scAutoSalvageRunning) return;
   scAutoSalvageRunning = true;
-  let maxSalvCount = getMaxMissions(); // default max in-flight salvage fleets
+  let maxSalvCount = getMaxMissions('salvage'); // default max in-flight salvage fleets
+  const minSalvageTotal = getMinResourceTotal('salvage');
   try {
     const status = document.getElementById('sc-salvage-status');
     const [mi, res] = await Promise.all([
@@ -388,7 +454,8 @@ async function automateSalvage() {
         for (const k of SALVAGE_KEYS_LOCAL) { const v = loot[k] || 0; if (v) total += v; }
         return { reportId: r.id, systemId: r.systemId, system: r.systemName || `#${r.systemId}`, zone: r.securityZone || null, total, expires: r.salvageExpiresAt || null, res: loot };
       })
-      .filter(s => s.total > 0 && (!s.expires || new Date(s.expires) > now) && s.systemId != null && !inflight.has(s.systemId))
+      .filter(s => s.total >= minSalvageTotal && s.total > 0
+        && (!s.expires || new Date(s.expires) > now) && s.systemId != null && !inflight.has(s.systemId))
       .sort((a, b) => b.total - a.total);
 
     if (!pending.length) { setStatusText(status, 'No uncollected salvage to collect.'); return; }
@@ -418,6 +485,47 @@ async function automateSalvage() {
     await collectSalvage(chosen);
   } finally {
     scAutoSalvageRunning = false;
+  }
+}
+
+async function automateDebris() {
+  if (scAutoDebrisRunning) return;
+  scAutoDebrisRunning = true;
+  const maxDebrisCount = getMaxMissions('debris');
+  const minDebrisTotal = getMinResourceTotal('debris');
+  try {
+    const status = document.getElementById('sc-debris-status');
+    const mi = await browser.runtime.sendMessage({ type: 'GET_MISSIONS' });
+    if (mi.error) { setStatusText(status, `Error: ${mi.error}`); return; }
+
+    const maxSlots = getEffectiveMaxFleetSlots(mi);
+    if (maxSlots != null && maxSlots <= (mi.missions || []).length) {
+      setStatusText(status, `Cannot launch debris collection: ${(mi.missions || []).length}/${mi.maxFleetSlots} fleet slots in use${reservedSlotMessage()}.`);
+      return;
+    }
+
+    const collecting = (mi.missions || []).filter(m => m.missionType === 'collect_debris');
+    if (collecting.length >= maxDebrisCount) {
+      setStatusText(status, `Waiting for an available debris fleet slot… ${collecting.length}/${maxDebrisCount} collect_debris fleets in flight.`);
+      return;
+    }
+
+    const inflight = new Set(collecting.map(m => m.targetSystemId).filter(id => id != null));
+    for (const systemId of scCollecting.keys()) inflight.add(systemId);
+    const { debris_fields } = await browser.storage.local.get('debris_fields');
+    const now = Date.now();
+    const pending = (debris_fields || [])
+      .map(field => ({ ...field, total: (field.ore || 0) + (field.silicates || 0) + (field.alloys || 0) }))
+      .filter(field => field.debrisId != null && field.systemId != null && field.total >= minDebrisTotal && field.total > 0
+        && (!field.expires || new Date(field.expires) > now)
+        && !inflight.has(field.systemId) && !scJustCollected.has(field.debrisId))
+      .sort((a, b) => b.total - a.total);
+    if (!pending.length) { setStatusText(status, 'No uncollected debris to collect.'); return; }
+
+    setStatusText(status, `Collecting debris at ${pending[0].system}…`);
+    await collectDebris(pending[0], true);
+  } finally {
+    scAutoDebrisRunning = false;
   }
 }
 
@@ -474,10 +582,8 @@ function drawToggles(boxId, filter, redraw, onChange) {
     const b = document.createElement('button');
     const on = filter.has(z);
     b.type = 'button';
+    b.className = `zone-toggle zone-${z}${on ? ' is-selected' : ''}`;
     b.textContent = z;
-    b.style.cssText = `padding:4px 10px; border-radius:6px; cursor:pointer; font-size:0.8rem;
-      border:1px solid ${ZONE_COLOR[z]}; text-transform:capitalize;
-      color:${on ? '#0d1117' : ZONE_COLOR[z]}; background:${on ? ZONE_COLOR[z] : 'transparent'};`;
     b.addEventListener('click', () => {
       if (on) filter.delete(z); else filter.add(z);
       redraw();
@@ -636,74 +742,163 @@ async function loadActiveSurveys() {
 }
 
 function renderSurveys() {
-  const tbody = document.getElementById('sc-surveys-tbody');
-  tbody.textContent = '';
-  scTicks.invest = [];
+  const list = document.getElementById('sc-surveys-list');
+  list.textContent = '';
+  scTicks.invest = []; // Reset the invest ticks for new render
   document.getElementById('sc-count').textContent =
     `${scPending.length} awaiting investigation` + (scReturning.length ? ` · ${scReturning.length} returning` : '');
   const now = Date.now();
-  for (const r of scPending) {
-    const tr = document.createElement('tr');
-    if (r.anomalyExpiresAt) tr.dataset.expires = r.anomalyExpiresAt;
 
-    const tgtTd = document.createElement('td');
+  const mountProgress = (host, systemId, statusHost, etaHost) => {
+    const track = document.createElement('div');
+    track.className = 'mission-progress-track sc-transit-track sc-inv-progress-track';
+    const fill = document.createElement('div');
+    fill.className = 'mission-progress-fill sc-transit-fill sc-inv-progress-fill';
+    track.appendChild(fill);
+    host.appendChild(track);
+
+    const m = systemId != null ? findMission('investigate', systemId) : null;
+    if (!m) {
+      fill.style.width = '0%';
+      if (statusHost) statusHost.textContent = '—';
+      if (etaHost) etaHost.textContent = '—';
+      return;
+    }
+
+    const upd = () => {
+      const p = missionProgress(m);
+      fill.style.width = `${(p.frac * 100).toFixed(1)}%`;
+      fill.style.background = p.gradient || p.color;
+      if (statusHost) {
+        statusHost.textContent = p.label;
+        statusHost.style.color = p.color;
+      }
+      if (etaHost) etaHost.textContent = p.eta > 0 ? fmtCountdown(p.eta) : '—';
+    };
+    upd();
+    scTicks.invest.push(upd);
+  };
+
+  const makeMetaItem = (label, value, extraClass) => {
+    const d = document.createElement('div');
+    d.className = 'sc-inv-meta-item';
+    const k = document.createElement('span');
+    k.className = 'sc-inv-meta-key';
+    k.textContent = label;
+    const v = document.createElement('span');
+    v.className = `sc-inv-meta-val${extraClass ? ` ${extraClass}` : ''}`;
+    v.textContent = value;
+    d.append(k, v);
+    return d;
+  };
+
+  for (const r of scPending) {
+    const card = document.createElement('div');
+    card.className = 'sc-inv-card';
+    card.dataset.system = r.systemId;
+    if (r.anomalyExpiresAt) card.dataset.expires = r.anomalyExpiresAt;
+
+    const action = document.createElement('div');
+    action.className = 'sc-inv-action';
     const btn = document.createElement('button');
     const busy = scInvestigating.has(r.systemId);
-    btn.textContent = busy ? 'Investigating…' : 'Launch Investigation';
     btn.disabled = busy;
-    btn.style.cssText = busy
-      ? 'background:#30363d; border:1px solid #30363d; color:#8b949e;' +
-        ' padding:6px 16px; border-radius:6px; cursor:not-allowed; font-size:0.85rem;'
-      : 'background:#238636; border:1px solid #2ea043; color:#fff;' +
-        ' padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem;';
+    btn.className = busy ? 'sc-inv-icon-btn sc-inv-icon-btn-disabled' : 'sc-inv-icon-btn sc-inv-icon-btn-launch';
+    btn.setAttribute('aria-label', busy ? 'Investigating' : 'Launch Investigation');
+    btn.title = busy ? 'Investigating…' : 'Launch Investigation';
     if (!busy) btn.addEventListener('click', () => investigate(r));
-    tgtTd.appendChild(btn);
-    tr.appendChild(tgtTd);
-    tr.appendChild(progressCell('investigate', r.systemId, 'invest'));
+    action.appendChild(btn);
 
-    tr.dataset.system = r.systemId;
-    const cells = [
-      r.systemName || `#${r.systemId}`,
-      r.eventTitle || r.eventType,
-      r.securityZone || '—',
-      '…',   // fuel cost, filled async
-      '…',   // travel time, filled async
-      r.anomalyExpiresAt ? fmtCountdown(new Date(r.anomalyExpiresAt) - now) : '—',
-    ];
-    cells.forEach((v, i) => {
-      const td = document.createElement('td');
-      td.textContent = v;
-      if (i === 2) td.style.color = ZONE_COLOR[r.securityZone] || '#8b949e';
-      if (i === 3) td.className = 'sc-fuel';
-      if (i === 4) td.className = 'sc-time';
-      if (i === 5) td.className = 'sc-timer';
-      tr.appendChild(td);
-    });
-    tbody.appendChild(tr);
+    const meta = document.createElement('div');
+    meta.className = 'sc-inv-meta-grid';
+    const systemItem = makeMetaItem('System', r.systemName || `#${r.systemId}`);
+    const status = document.createElement('span');
+    status.className = 'sc-transit-status sc-inv-system-status';
+    status.textContent = '—';
+    systemItem.appendChild(status);
+    const zoneItem = makeMetaItem('Zone', r.securityZone || '—', r.securityZone ? 'sc-zone-val' : '');
+    if (r.securityZone) {
+      const zoneVal = zoneItem.querySelector('.sc-inv-meta-val');
+      if (zoneVal) zoneVal.style.color = ZONE_COLORS[r.securityZone] || ZONE_COLORS.unknown;
+    }
+    meta.append(
+      systemItem,
+      makeMetaItem('Anomaly', r.eventTitle || r.eventType || '—'),
+      zoneItem,
+      makeMetaItem('Fuel Cost', '…', 'sc-fuel'),
+      makeMetaItem('Travel Time', '…', 'sc-time'),
+      makeMetaItem('Expires in', r.anomalyExpiresAt ? fmtCountdown(new Date(r.anomalyExpiresAt) - now) : '—', 'sc-timer'),
+    );
+
+    const progressEtaItem = makeMetaItem('Progress ETA', '—', 'sc-inv-progress-eta');
+    progressEtaItem.classList.add('sc-eta-grid-item');
+    const eta = progressEtaItem.querySelector('.sc-inv-meta-val');
+    meta.append(progressEtaItem);
+
+    const prog = document.createElement('div');
+    prog.className = 'sc-inv-progress';
+    mountProgress(prog, r.systemId, status, eta);
+
+    const body = document.createElement('div');
+    body.className = 'sc-mission-main sc-inv-main';
+    body.append(action, meta);
+
+    card.append(body, prog);
+    list.appendChild(card);
   }
 
   // Returning fleets: investigation done, keep the row (with the returning
   // progress bar) until the fleet is home. No launch button, no fuel/expiry.
   for (const r of scReturning) {
-    const tr = document.createElement('tr');
-    tr.dataset.system = r.systemId;
-    const tgtTd = document.createElement('td');
+    const card = document.createElement('div');
+    card.className = 'sc-inv-card';
+    card.dataset.system = r.systemId;
+
+    const action = document.createElement('div');
+    action.className = 'sc-inv-action';
     const btn = document.createElement('button');
-    btn.textContent = 'Returning…';
     btn.disabled = true;
-    btn.style.cssText = 'background:#30363d; border:1px solid #30363d; color:#8b949e;' +
-      ' padding:6px 16px; border-radius:6px; cursor:not-allowed; font-size:0.85rem;';
-    tgtTd.appendChild(btn);
-    tr.appendChild(tgtTd);
-    tr.appendChild(progressCell('investigate', r.systemId, 'invest'));
-    const cells = [r.systemName, r.eventTitle, r.securityZone || '—', '—', '—', '—'];
-    cells.forEach((v, i) => {
-      const td = document.createElement('td');
-      td.textContent = v;
-      if (i === 2) td.style.color = ZONE_COLOR[r.securityZone] || '#8b949e';
-      tr.appendChild(td);
-    });
-    tbody.appendChild(tr);
+    btn.className = 'sc-inv-icon-btn sc-inv-icon-btn-disabled';
+    btn.setAttribute('aria-label', 'Returning');
+    btn.title = 'Returning…';
+    action.appendChild(btn);
+
+    const meta = document.createElement('div');
+    meta.className = 'sc-inv-meta-grid';
+    const systemItem = makeMetaItem('System', r.systemName);
+    const status = document.createElement('span');
+    status.className = 'sc-transit-status sc-inv-system-status';
+    status.textContent = '—';
+    systemItem.appendChild(status);
+    const zoneItem = makeMetaItem('Zone', r.securityZone || '—', r.securityZone ? 'sc-zone-val' : '');
+    if (r.securityZone) {
+      const zoneVal = zoneItem.querySelector('.sc-inv-meta-val');
+      if (zoneVal) zoneVal.style.color = ZONE_COLORS[r.securityZone] || ZONE_COLORS.unknown;
+    }
+    meta.append(
+      systemItem,
+      makeMetaItem('Anomaly', r.eventTitle || '—'),
+      zoneItem,
+      makeMetaItem('Fuel Cost', '—'),
+      makeMetaItem('Travel Time', '—'),
+      makeMetaItem('Expires in', '—'),
+    );
+
+    const progressEtaItem = makeMetaItem('Progress ETA', '—', 'sc-inv-progress-eta');
+    progressEtaItem.classList.add('sc-eta-grid-item');
+    const eta = progressEtaItem.querySelector('.sc-inv-meta-val');
+    meta.append(progressEtaItem);
+
+    const prog = document.createElement('div');
+    prog.className = 'sc-inv-progress';
+    mountProgress(prog, r.systemId, status, eta);
+
+    const body = document.createElement('div');
+    body.className = 'sc-mission-main sc-inv-main';
+    body.append(action, meta);
+
+    card.append(body, prog);
+    list.appendChild(card);
   }
   computeFuel();
 }
@@ -715,8 +910,8 @@ let fuelGen = 0;
 async function computeFuel() {
   const gen = ++fuelGen;
   const planetId = Number(document.getElementById('sc-planet').value);
-  const fuelCells = () => document.querySelectorAll('#sc-surveys-tbody td.sc-fuel');
-  const timeCells = () => document.querySelectorAll('#sc-surveys-tbody td.sc-time');
+  const fuelCells = () => document.querySelectorAll('#sc-surveys-list .sc-fuel');
+  const timeCells = () => document.querySelectorAll('#sc-surveys-list .sc-time');
   // Estimate uses the template as designed (not capped to the planet's stock).
   const tpl = scTemplates.find(t => String(t.id) === document.getElementById('sc-inv-template').value);
   const ships = Object.entries(tpl ? tpl.ships : {})
@@ -728,7 +923,7 @@ async function computeFuel() {
     return;
   }
 
-  for (const tr of document.querySelectorAll('#sc-surveys-tbody tr')) {
+  for (const tr of document.querySelectorAll('#sc-surveys-list .sc-inv-card')) {
     if (gen !== fuelGen) return;
     const cell = tr.querySelector('.sc-fuel');
     const timeCell = tr.querySelector('.sc-time');
@@ -748,7 +943,7 @@ async function computeFuel() {
 function tickTimers() {
   const now = Date.now();
   let expired = false;
-  document.querySelectorAll('#sc-surveys-tbody tr').forEach(tr => {
+  document.querySelectorAll('#sc-surveys-list .sc-inv-card').forEach(tr => {
     if (!tr.dataset.expires) return;
     const ms = new Date(tr.dataset.expires) - now;
     if (ms <= 0) { tr.remove(); expired = true; return; }
@@ -760,8 +955,21 @@ function tickTimers() {
     document.getElementById('sc-count').textContent = `${scPending.length} awaiting investigation`;
   }
 
+  let debrisExpired = false;
+  document.querySelectorAll('#sc-debris-list .sc-debris-card').forEach(card => {
+    if (!card.dataset.expires) return;
+    const ms = new Date(card.dataset.expires) - now;
+    if (ms <= 0) { card.remove(); debrisExpired = true; return; }
+    const cell = card.querySelector('.sc-debris-timer');
+    if (cell) cell.textContent = fmtCountdown(ms);
+  });
+  if (debrisExpired) {
+    scDebris = scDebris.filter(f => !f.expires || new Date(f.expires) > now);
+    renderDebris();
+  }
+
   let salvExpired = false;
-  document.querySelectorAll('#sc-salvage-tbody tr').forEach(tr => {
+  document.querySelectorAll('#sc-salvage-list .sc-salvage-card').forEach(tr => {
     if (!tr.dataset.expires) return;
     const ms = new Date(tr.dataset.expires) - now;
     if (ms <= 0) { tr.remove(); salvExpired = true; return; }
@@ -874,6 +1082,7 @@ function saveSurveyZone() {
 const CARGO_KEYS = ['ore_freighter', 'bulk_carrier', 'freighter', 'transport_shuttle'];
 let scCargoShips = [];               // [{ shipDefId, name, imageUrl, cap }]
 let scAllShips = [];                 // every ship def: [{ shipDefId, name, imageUrl }]
+let scCargoAvail = {};               // shipDefId → on-planet count for active planet
 const scCargoSel = new Set();        // selected shipDefIds
 
 async function loadCargoShips() {
@@ -921,20 +1130,35 @@ function renderCargoToggles() {
   box.textContent = '';
   for (const s of scCargoShips) {
     const on = scCargoSel.has(s.shipDefId);
+    const qty = scCargoAvail[s.shipDefId] || 0;
     const b = document.createElement('button');
     b.type = 'button';
-    b.title = `${s.name} — ${s.cap.toLocaleString()} cargo`;
-    b.style.cssText = `padding:2px; border-radius:6px; cursor:pointer; line-height:0;
-      border:2px solid ${on ? '#2ea043' : '#30363d'}; background:${on ? '#193b22' : 'transparent'};`;
+    b.className = 'sc-cargo-toggle';
+    b.dataset.shipDefId = String(s.shipDefId);
+    b.title = `${s.name} — ${qty.toLocaleString()} on this planet`;
+    b.classList.toggle('is-selected', on);
+    b.classList.toggle('is-empty', qty <= 0);
     if (s.imageUrl) {
       const img = document.createElement('img');
       img.src = s.imageUrl;
-      img.style.cssText = 'width:28px; height:28px; object-fit:contain;';
       b.appendChild(img);
-    } else {
-      b.textContent = s.name;
-      b.style.lineHeight = '';
     }
+
+    const label = document.createElement('span');
+    label.className = 'sc-cargo-label';
+
+    const count = document.createElement('span');
+    count.className = 'sc-cargo-count';
+    count.textContent = String(qty);
+    label.appendChild(count);
+
+    if (!s.imageUrl) {
+      const text = document.createElement('span');
+      text.textContent = s.name;
+      label.appendChild(text);
+    }
+    b.appendChild(label);
+
     b.addEventListener('click', () => {
       if (on) scCargoSel.delete(s.shipDefId); else scCargoSel.add(s.shipDefId);
       rememberSelection('sc-cargo-ships', [...scCargoSel]);
@@ -949,6 +1173,17 @@ function renderCargoToggles() {
 // Selected haulers as [{ shipDefId, cap }].
 function selectedCargo() {
   return scCargoShips.filter(s => scCargoSel.has(s.shipDefId));
+}
+
+// Short ship labels for tight UI columns: "Transport Shuttle" -> "TS".
+function shipShortName(name) {
+  const parts = String(name || '').split(/[\s-]+/).filter(Boolean);
+  if (!parts.length) return '?';
+  if (parts.length === 1) {
+    const clean = parts[0].replace(/[^a-z0-9]/gi, '');
+    return (clean.slice(0, 2) || clean || '?').toUpperCase();
+  }
+  return parts.map(p => (p[0] || '').toUpperCase()).join('');
 }
 
 // Nearest owned planet to a target system (Euclidean on galaxy-map coords).
@@ -975,14 +1210,20 @@ function debrisSourcePlanet(systemId) {
 // Ships stationed on the selected planet, shown above both tables (one fetch):
 // cargo-only above the debris table, every type above the investigation table.
 async function updateAvail() {
-  const debrisBox = document.getElementById('sc-debris-avail');
-  const invBox = document.getElementById('sc-inv-avail');
   const planetId = Number(document.getElementById('sc-planet').value);
-  if (!planetId || !scAllShips.length) { clearAvailStrip(debrisBox); clearAvailStrip(invBox); return; }
+  if (!planetId || !scAllShips.length) {
+    scCargoAvail = {};
+    renderCargoToggles();
+    return;
+  }
   const av = await browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId });
-  if (av.error) { clearAvailStrip(debrisBox, av.error); clearAvailStrip(invBox, av.error); return; }
-  renderAvailStrip(debrisBox, scCargoShips, av.available, 'No cargo ships on this planet.');
-  renderAvailStrip(invBox, scAllShips, av.available, 'No ships on this planet.');
+  if (av.error) {
+    scCargoAvail = {};
+    renderCargoToggles();
+    return;
+  }
+  scCargoAvail = av.available || {};
+  renderCargoToggles();
 }
 
 // Fewest selected haulers (largest-first, smallest fills the tail) to carry
@@ -1001,17 +1242,14 @@ function planFleet(total, ships) {
 }
 
 async function loadDebris() {
-  const { debris_fields, debris_last_check } = await browser.storage.local.get(['debris_fields', 'debris_last_check']);
+  const { debris_fields } = await browser.storage.local.get('debris_fields');
   scDebris = (debris_fields || []).map(f => ({ ...f, total: (f.ore || 0) + (f.silicates || 0) + (f.alloys || 0) }));
-  document.getElementById('sc-debris-last').textContent = debris_last_check
-    ? `Last check: ${new Date(debris_last_check).toLocaleString()}`
-    : 'Not checked yet.';
   renderDebris();
 }
 
 function renderDebris() {
-  const tbody = document.getElementById('sc-debris-tbody');
-  tbody.textContent = '';
+  const list = document.getElementById('sc-debris-list');
+  list.textContent = '';
   scTicks.debris = [];
 
   if (pruneInvHistory()) saveInvHistory();   // expire stale history between polls
@@ -1044,70 +1282,133 @@ function renderDebris() {
     .filter(f => !scInvestigatedOnly || (f.systemId != null && scInvHistory.has(f.systemId)));
   const rows = scShowHidden ? sorted : sorted.filter(f => !scHiddenDebris.has(f.id));
   if (!rows.length) {
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = 12; td.style.color = '#484f58';
-    td.textContent = !scDebris.length ? 'No debris fields currently visible.'
+    const empty = document.createElement('div');
+    empty.className = 'sc-transit-empty';
+    empty.textContent = !scDebris.length ? 'No debris fields currently visible.'
       : (scDebrisZoneFilter.size || scInvestigatedOnly) ? 'No debris matches the current filter.'
       : 'All debris fields hidden.';
-    tr.appendChild(td); tbody.appendChild(tr);
+    list.appendChild(empty);
     return;
   }
-  for (const f of rows) {
-    const tr = document.createElement('tr');
-    if (f.systemId != null) tr.dataset.system = f.systemId;
-    tr.dataset.total = f.total || 0;
-    const hidden = scHiddenDebris.has(f.id);
-    if (hidden) tr.style.opacity = '0.45';
 
-    const btnTd = document.createElement('td');
+  const mountDebrisProgress = (host, systemId, statusHost, etaHost) => {
+    const track = document.createElement('div');
+    track.className = 'mission-progress-track sc-transit-track sc-debris-progress-track';
+    const fill = document.createElement('div');
+    fill.className = 'mission-progress-fill sc-transit-fill sc-debris-progress-fill';
+    track.appendChild(fill);
+    host.appendChild(track);
+
+    const mission = systemId != null ? findMission('collect_debris', systemId) : null;
+    if (!mission) {
+      fill.style.width = '0%';
+      if (statusHost) statusHost.textContent = '—';
+      if (etaHost) etaHost.textContent = '—';
+      return;
+    }
+
+    const update = () => {
+      const progress = missionProgress(mission);
+      fill.style.width = `${(progress.frac * 100).toFixed(1)}%`;
+      fill.style.background = progress.gradient || progress.color;
+      if (statusHost) {
+        statusHost.textContent = progress.label;
+        statusHost.style.color = progress.color;
+      }
+      if (etaHost) etaHost.textContent = progress.eta > 0 ? fmtCountdown(progress.eta) : '—';
+    };
+    update();
+    scTicks.debris.push(update);
+  };
+
+  const makeMetaItem = (label, value, extraClass) => {
+    const item = document.createElement('div');
+    item.className = 'sc-debris-meta-item';
+    const key = document.createElement('span');
+    key.className = 'sc-debris-meta-key';
+    key.textContent = label;
+    const val = document.createElement('span');
+    val.className = `sc-debris-meta-val${extraClass ? ` ${extraClass}` : ''}`;
+    val.textContent = value;
+    item.append(key, val);
+    return item;
+  };
+
+  for (const f of rows) {
+    const card = document.createElement('div');
+    card.className = 'sc-debris-card';
+    if (f.systemId != null) card.dataset.system = f.systemId;
+    card.dataset.total = f.total || 0;
+    if (f.expires) card.dataset.expires = f.expires;
+    const hidden = scHiddenDebris.has(f.id);
+    if (hidden) card.style.opacity = '0.45';
+
+    const action = document.createElement('div');
+    action.className = 'sc-debris-action';
     const btn = document.createElement('button');
     const busy = f.debrisId != null && (scJustCollected.has(f.debrisId) || (f.systemId != null && collectingSystems.has(f.systemId)));
     const ok = f.debrisId != null && !busy;
-    btn.textContent = busy ? 'Collecting…' : ok ? 'Collect' : '—';
     btn.disabled = !ok;
-    btn.style.cssText = ok
-      ? 'background:#238636; border:1px solid #2ea043; color:#fff; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem;'
-      : 'background:#30363d; border:1px solid #30363d; color:#8b949e; padding:6px 16px; border-radius:6px; cursor:not-allowed; font-size:0.85rem;';
+    btn.className = ok ? 'sc-salvage-icon-btn sc-debris-icon-btn-launch' : 'sc-salvage-icon-btn sc-debris-icon-btn-disabled';
+    btn.setAttribute('aria-label', busy ? 'Collecting' : ok ? 'Collect Debris' : 'Unavailable');
+    btn.title = busy ? 'Collecting…' : ok ? 'Collect Debris' : 'Unavailable';
     if (ok) btn.addEventListener('click', () => collectDebris(f));
-    btnTd.appendChild(btn);
-    tr.appendChild(btnTd);
-    tr.appendChild(progressCell('collect_debris', f.systemId, 'debris'));
+    action.appendChild(btn);
 
-    const cells = [
-      f.system,
-      f.zone || '—',
-      (f.ore || 0).toLocaleString(),
-      (f.silicates || 0).toLocaleString(),
-      (f.alloys || 0).toLocaleString(),
-      (f.total || 0).toLocaleString(),
-      '…',   // ship count, filled by computeDebrisFuel
-      '…',   // fuel cost, filled async
-      '…',   // travel time, filled async
-    ];
-    cells.forEach((v, i) => {
-      const td = document.createElement('td');
-      td.textContent = v;
-      if (i === 1) td.style.color = ZONE_COLOR[f.zone] || '#8b949e';
-      if (i === 6) td.className = 'sc-debris-shipn';
-      if (i === 7) td.className = 'sc-debris-fuel';
-      if (i === 8) td.className = 'sc-debris-time';
-      tr.appendChild(td);
-    });
-
-    const hideTd = document.createElement('td');
-    const hideBtn = document.createElement('button');
-    hideBtn.textContent = hidden ? '↩' : '✕';
-    hideBtn.title = hidden ? 'Unhide row' : 'Hide row';
-    hideBtn.style.cssText = 'background:transparent; border:none; color:#8b949e; cursor:pointer; font-size:0.9rem;';
-    hideBtn.addEventListener('click', () => {
+    const hideButton = document.createElement('button');
+    hideButton.className = 'sc-debris-hide-btn';
+    hideButton.textContent = hidden ? '↩' : '✕';
+    hideButton.title = hidden ? 'Unhide field' : 'Hide field';
+    hideButton.setAttribute('aria-label', hideButton.title);
+    hideButton.addEventListener('click', () => {
       if (hidden) scHiddenDebris.delete(f.id); else scHiddenDebris.add(f.id);
       renderDebris();
     });
-    hideTd.appendChild(hideBtn);
-    tr.appendChild(hideTd);
+    action.appendChild(hideButton);
 
-    tbody.appendChild(tr);
+    const meta = document.createElement('div');
+    meta.className = 'sc-debris-meta-grid';
+    const systemItem = makeMetaItem('System', f.system);
+    const status = document.createElement('span');
+    status.className = 'sc-transit-status sc-debris-system-status';
+    status.textContent = '—';
+    systemItem.appendChild(status);
+    const zoneItem = makeMetaItem('Zone', f.zone || '—');
+    if (f.zone) {
+      const zoneValue = zoneItem.querySelector('.sc-debris-meta-val');
+      if (zoneValue) zoneValue.style.color = ZONE_COLORS[f.zone] || ZONE_COLORS.unknown;
+    }
+    const resourcesLeft = [
+      ['Ore', f.ore],
+      ['Sil', f.silicates],
+      ['Alloy', f.alloys],
+    ].filter(([, value]) => value).map(([label, value]) => `${label} ${value.toLocaleString()}`).join(', ');
+    meta.append(
+      systemItem,
+      zoneItem,
+      makeMetaItem('Resources left', resourcesLeft || '—', 'sc-debris-breakdown'),
+      makeMetaItem('Total', (f.total || 0).toLocaleString()),
+      makeMetaItem('Number of Ships', '…', 'sc-debris-shipn'),
+      makeMetaItem('Fuel Cost', '…', 'sc-debris-fuel'),
+      makeMetaItem('Travel Time', '…', 'sc-debris-time'),
+      makeMetaItem('Expires in', f.expires ? fmtCountdown(new Date(f.expires) - Date.now()) : '—', 'sc-debris-timer'),
+    );
+
+    const progressEtaItem = makeMetaItem('Progress ETA', '—', 'sc-debris-progress-eta');
+    progressEtaItem.classList.add('sc-eta-grid-item');
+    const progressEta = progressEtaItem.querySelector('.sc-debris-meta-val');
+    meta.append(progressEtaItem);
+
+    const body = document.createElement('div');
+    body.className = 'sc-mission-main sc-debris-main';
+    body.append(action, meta);
+
+    const progress = document.createElement('div');
+    progress.className = 'sc-debris-progress';
+    mountDebrisProgress(progress, f.systemId, status, progressEta);
+
+    card.append(body, progress);
+    list.appendChild(card);
   }
   computeDebrisFuel();
 }
@@ -1117,7 +1418,7 @@ function renderDebris() {
 let debrisFuelGen = 0;
 async function computeDebrisFuel() {
   const gen = ++debrisFuelGen;
-  const sel = q => () => document.querySelectorAll(`#sc-debris-tbody td.${q}`);
+  const sel = q => () => document.querySelectorAll(`#sc-debris-list .${q}`);
   const fuelCells = sel('sc-debris-fuel');
   const shipCells = sel('sc-debris-shipn');
   const timeCells = sel('sc-debris-time');
@@ -1129,12 +1430,16 @@ async function computeDebrisFuel() {
     return;
   }
   const nameOf = id => (scCargoShips.find(c => c.shipDefId === id) || {}).name || '#' + id;
-  for (const tr of document.querySelectorAll('#sc-debris-tbody tr')) {
+  for (const tr of document.querySelectorAll('#sc-debris-list .sc-debris-card')) {
     if (gen !== debrisFuelGen) return;
     const ships = planFleet(Number(tr.dataset.total) || 0, cargo);
     const named = ships.map(s => `${s.quantity}× ${nameOf(s.shipDefId)}`).join(', ');
+    const shortNamed = ships.map(s => `${s.quantity}× ${shipShortName(nameOf(s.shipDefId))}`).join(', ');
     const nCell = tr.querySelector('.sc-debris-shipn');
-    if (nCell) nCell.textContent = ships.length ? named : '—';
+    if (nCell) {
+      nCell.textContent = ships.length ? shortNamed : '—';
+      nCell.title = ships.length ? named : '';
+    }
 
     const cell = tr.querySelector('.sc-debris-fuel');
     const timeCell = tr.querySelector('.sc-debris-time');
@@ -1152,7 +1457,7 @@ async function computeDebrisFuel() {
   }
 }
 
-async function collectDebris(field) {
+async function collectDebris(field, automated = false) {
   const status = document.getElementById('sc-progress');
   const planet = debrisSourcePlanet(field.systemId);
   if (!planet) { setStatusText(status, 'No source planet found for this field.'); return; }
@@ -1173,7 +1478,7 @@ async function collectDebris(field) {
   const carried = ships.reduce((sum, s) => sum + s.quantity * capOf(s.shipDefId), 0);
   const short = carried < field.total;
 
-  if (!await confirmDialog(`Collect debris at ${field.system} (${field.total.toLocaleString()} cargo)?\n\n` +
+  if (!automated && !await confirmDialog(`Collect debris at ${field.system} (${field.total.toLocaleString()} cargo)?\n\n` +
     `From: ${planet ? planet.name : planetId}` +
     (short ? `\n\n⚠ Selected ships on this planet only carry ${carried.toLocaleString()} — collecting what fits.` : ''), ships)) return;
 
@@ -1209,65 +1514,124 @@ const RES_LABEL = { ore: 'Ore', silicates: 'Sil', hydrogen: 'Hyd', alloys: 'Allo
   cryo_ice: 'Cryo-Ice', quantum_dust: 'Q.Dust', plasma_core: 'Plasma', dark_matter: 'D.Matter', antimatter: 'Antim' };
 
 function renderSalvage() {
-  const tbody = document.getElementById('sc-salvage-tbody');
-  tbody.textContent = '';
+  const list = document.getElementById('sc-salvage-list');
+  list.textContent = '';
   scTicks.salvage = [];
   document.getElementById('sc-salvage-count').textContent = `${scSalvage.length} awaiting collection`;
   const now = Date.now();
 
   const sorted = applySort('sc-salvage-head', scSalvage, scSalvageSort, 'system');
   if (!sorted.length) {
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = 10; td.style.color = '#484f58';
-    td.textContent = 'No uncollected salvage.';
-    tr.appendChild(td); tbody.appendChild(tr);
+    const d = document.createElement('div');
+    d.className = 'sc-transit-empty';
+    d.textContent = 'No uncollected salvage.';
+    list.appendChild(d);
     return;
   }
 
-  for (const s of sorted) {
-    const tr = document.createElement('tr');
-    if (s.systemId != null) tr.dataset.system = s.systemId;
-    tr.dataset.total = s.total || 0;
-    if (s.expires) tr.dataset.expires = s.expires;
+  const mountSalvageProgress = (host, systemId, statusHost, etaHost) => {
+    const track = document.createElement('div');
+    track.className = 'mission-progress-track sc-transit-track sc-salvage-progress-track';
+    const fill = document.createElement('div');
+    fill.className = 'mission-progress-fill sc-transit-fill sc-salvage-progress-fill';
+    track.appendChild(fill);
+    host.appendChild(track);
 
-    const btnTd = document.createElement('td');
+    const m = systemId != null ? findMission('collect_salvage', systemId) : null;
+    if (!m) {
+      fill.style.width = '0%';
+      if (statusHost) statusHost.textContent = '—';
+      if (etaHost) etaHost.textContent = '—';
+      return;
+    }
+
+    const upd = () => {
+      const p = missionProgress(m);
+      fill.style.width = `${(p.frac * 100).toFixed(1)}%`;
+      fill.style.background = p.gradient || p.color;
+      if (statusHost) {
+        statusHost.textContent = p.label;
+        statusHost.style.color = p.color;
+      }
+      if (etaHost) etaHost.textContent = p.eta > 0 ? fmtCountdown(p.eta) : '—';
+    };
+    upd();
+    scTicks.salvage.push(upd);
+  };
+
+  const makeMetaItem = (label, value, extraClass) => {
+    const d = document.createElement('div');
+    d.className = 'sc-salvage-meta-item';
+    const k = document.createElement('span');
+    k.className = 'sc-salvage-meta-key';
+    k.textContent = label;
+    const v = document.createElement('span');
+    v.className = `sc-salvage-meta-val${extraClass ? ` ${extraClass}` : ''}`;
+    v.textContent = value;
+    d.append(k, v);
+    return d;
+  };
+
+  for (const s of sorted) {
+    const card = document.createElement('div');
+    card.className = 'sc-salvage-card';
+    if (s.systemId != null) card.dataset.system = s.systemId;
+    card.dataset.total = s.total || 0;
+    if (s.expires) card.dataset.expires = s.expires;
+
+    const action = document.createElement('div');
+    action.className = 'sc-salvage-action';
     const btn = document.createElement('button');
     const mission = s.systemId != null ? findMission('collect_salvage', s.systemId) : null;
     const busy = scJustSalvaged.has(s.reportId) || !!mission;
-    btn.textContent = busy ? 'Collecting…' : 'Collect';
     btn.disabled = busy;
-    btn.style.cssText = busy
-      ? 'background:#30363d; border:1px solid #30363d; color:#8b949e; padding:6px 16px; border-radius:6px; cursor:not-allowed; font-size:0.85rem;'
-      : 'background:#238636; border:1px solid #2ea043; color:#fff; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem;';
+    btn.className = busy ? 'sc-salvage-icon-btn sc-salvage-icon-btn-disabled' : 'sc-salvage-icon-btn sc-salvage-icon-btn-launch';
+    btn.setAttribute('aria-label', busy ? 'Collecting' : 'Collect Salvage');
+    btn.title = busy ? 'Collecting…' : 'Collect Salvage';
     if (!busy) btn.addEventListener('click', () => collectSalvage(s));
-    btnTd.appendChild(btn);
-    tr.appendChild(btnTd);
-    tr.appendChild(progressCell('collect_salvage', s.systemId, 'salvage'));
+    action.appendChild(btn);
 
     const breakdown = Object.entries(s.res)
       .map(([k, v]) => `${RES_LABEL[k] || k} ${v.toLocaleString()}`).join(', ');
-    const cells = [
-      s.system,
-      s.zone || '—',
-      breakdown,
-      (s.total || 0).toLocaleString(),
-      '…',   // ship count, filled by computeSalvageFuel
-      '…',   // fuel cost, filled async
-      '…',   // travel time, filled async
-      s.expires ? fmtCountdown(new Date(s.expires) - now) : '—',
-    ];
-    cells.forEach((v, i) => {
-      const td = document.createElement('td');
-      td.textContent = v;
-      if (i === 1) td.style.color = ZONE_COLOR[s.zone] || '#8b949e';
-      if (i === 4) td.className = 'sc-salvage-shipn';
-      if (i === 5) td.className = 'sc-salvage-fuel';
-      if (i === 6) td.className = 'sc-salvage-time';
-      if (i === 7) td.className = 'sc-salvage-timer';
-      tr.appendChild(td);
-    });
-    tbody.appendChild(tr);
+
+    const meta = document.createElement('div');
+    meta.className = 'sc-salvage-meta-grid';
+    const systemItem = makeMetaItem('System', s.system);
+    const status = document.createElement('span');
+    status.className = 'sc-transit-status sc-salvage-system-status';
+    status.textContent = '—';
+    systemItem.appendChild(status);
+    const zoneItem = makeMetaItem('Zone', s.zone || '—');
+    if (s.zone) {
+      const zoneVal = zoneItem.querySelector('.sc-salvage-meta-val');
+      if (zoneVal) zoneVal.style.color = ZONE_COLORS[s.zone] || ZONE_COLORS.unknown;
+    }
+    meta.append(
+      systemItem,
+      zoneItem,
+      makeMetaItem('Resources left', breakdown || '—', 'sc-salvage-breakdown'),
+      makeMetaItem('Total', (s.total || 0).toLocaleString()),
+      makeMetaItem('Number of Ships', '…', 'sc-salvage-shipn'),
+      makeMetaItem('Fuel Cost', '…', 'sc-salvage-fuel'),
+      makeMetaItem('Travel Time', '…', 'sc-salvage-time'),
+      makeMetaItem('Expires in', s.expires ? fmtCountdown(new Date(s.expires) - now) : '—', 'sc-salvage-timer'),
+    );
+
+    const progressEtaItem = makeMetaItem('Progress ETA', '—', 'sc-salvage-progress-eta');
+    progressEtaItem.classList.add('sc-eta-grid-item');
+    const eta = progressEtaItem.querySelector('.sc-salvage-meta-val');
+    meta.append(progressEtaItem);
+
+    const body = document.createElement('div');
+    body.className = 'sc-mission-main sc-salvage-main';
+    body.append(action, meta);
+
+    const prog = document.createElement('div');
+    prog.className = 'sc-salvage-progress';
+    mountSalvageProgress(prog, s.systemId, status, eta);
+
+    card.append(body, prog);
+    list.appendChild(card);
   }
   computeSalvageFuel();
 }
@@ -1278,7 +1642,7 @@ let salvageFuelGen = 0;
 async function computeSalvageFuel() {
   const gen = ++salvageFuelGen;
   const planetId = Number(document.getElementById('sc-planet').value);
-  const sel = q => () => document.querySelectorAll(`#sc-salvage-tbody td.${q}`);
+  const sel = q => () => document.querySelectorAll(`#sc-salvage-list .${q}`);
   const fuelCells = sel('sc-salvage-fuel');
   const shipCells = sel('sc-salvage-shipn');
   const timeCells = sel('sc-salvage-time');
@@ -1290,12 +1654,16 @@ async function computeSalvageFuel() {
     return;
   }
   const nameOf = id => (scCargoShips.find(c => c.shipDefId === id) || {}).name || '#' + id;
-  for (const tr of document.querySelectorAll('#sc-salvage-tbody tr')) {
+  for (const tr of document.querySelectorAll('#sc-salvage-list .sc-salvage-card')) {
     if (gen !== salvageFuelGen) return;
     const ships = planFleet(Number(tr.dataset.total) || 0, cargo);
     const named = ships.map(s => `${s.quantity}× ${nameOf(s.shipDefId)}`).join(', ');
+    const shortNamed = ships.map(s => `${s.quantity}× ${shipShortName(nameOf(s.shipDefId))}`).join(', ');
     const nCell = tr.querySelector('.sc-salvage-shipn');
-    if (nCell) nCell.textContent = ships.length ? named : '—';
+    if (nCell) {
+      nCell.textContent = ships.length ? shortNamed : '—';
+      nCell.title = ships.length ? named : '';
+    }
 
     const cell = tr.querySelector('.sc-salvage-fuel');
     const timeCell = tr.querySelector('.sc-salvage-time');

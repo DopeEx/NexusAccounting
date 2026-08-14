@@ -8,7 +8,7 @@
 
 import { SCAN_CACHE_MAX, getSystemPlanets } from './finder.js';
 import { loadFleetTemplates } from './fleets.js';
-import { clearAvailStrip, editFleetDialog, fuelEstimate, rememberSelection, rememberedSelections, renderAvailStrip, setStatusText } from '../common.js';
+import { clearAvailStrip, editFleetDialog, fuelEstimate, rememberSelection, rememberedSelections, renderAvailStrip, setStatusText, ZONE_COLORS } from '../common.js';
 
 const ICON_BASE = 'https://s0.nexuslegacy.space/images/resources/';
 // asteroid fieldType → resource icon + label
@@ -34,10 +34,6 @@ const afExcavator = () => document.getElementById('af-excavator').checked;
 // Mining ships the recommendation manages; other template ships (escort/combat)
 // are left untouched when seeding the launch fleet.
 const MINING_SHIPS = new Set([...Object.values(REC_SHIP).map(s => s[0]), 'Excavator']);
-// Security-zone colours: safe → hostile.
-const ZONE_COLOR = {
-  sentinel: '#56d364', open: '#f0883e', dead: '#ff7b72', rift: '#bc8cff', unknown: '#8b949e',
-};
 const ZONES = ['sentinel', 'open', 'dead', 'rift'];
 const afTypeFilter = new Set();    // empty = any; multi-select like the market
 const afZoneFilter = new Set();    // empty = any
@@ -193,7 +189,7 @@ export async function initAsteroidsTab() {
     }, 10000);   // catch returning mining fleets without a reload
   }
 
-  setStatusText(status, 'Pick how many nearest systems to scan, then Scan.');
+  setStatusText(status, '');
 }
 
 // Ships stationed on the selected mining planet, shown above the fields table.
@@ -264,10 +260,8 @@ function drawZoneInto(boxId, filter, redraw, after) {
     const b = document.createElement('button');
     const on = filter.has(z);
     b.type = 'button';
+    b.className = `zone-toggle zone-${z}${on ? ' is-selected' : ''}`;
     b.textContent = z;
-    b.style.cssText = `padding:4px 10px; border-radius:6px; cursor:pointer; font-size:0.8rem;
-      border:1px solid ${ZONE_COLOR[z]}; text-transform:capitalize;
-      color:${on ? '#0d1117' : ZONE_COLOR[z]}; background:${on ? ZONE_COLOR[z] : 'transparent'};`;
     b.addEventListener('click', () => {
       if (on) filter.delete(z); else filter.add(z);
       redraw();
@@ -319,7 +313,7 @@ function setLsButton() {
   const btn = document.getElementById('ls-search');
   const status = document.getElementById('ls-status');
   btn.textContent = lsRunning ? 'Stop Live Search' : 'Live Search';
-  btn.style.cssText = lsRunning ? 'background:#da3633; border:1px solid #f85149; color:#fff;' : '';
+  btn.classList.toggle('is-running', lsRunning);
   if (!lsRunning) { setStatusText(status, ''); return; }
   if (!lsTypeFilter.size) {
     setStatusText(status, '⚠ No resource type selected — every field type will match.', 'warning');
@@ -611,7 +605,7 @@ export function renderAsteroids() {
     const ship = document.createElement('span');
     ship.textContent = '🚀';
     ship.title = 'Send mining fleet here';
-    ship.style.cssText = 'cursor:pointer;';
+    ship.className = 'asteroids-fleet-ship';
     ship.addEventListener('click', () => sendMineMission(f));
     sendTd.appendChild(ship);
     tr.appendChild(sendTd);
@@ -636,7 +630,7 @@ export function renderAsteroids() {
       td.textContent = v;
       if (i === 1) td.style.color = TYPE_COLOR[f.type] || '#e6edf3';
       else if (i === 2 && f.mult != null) td.style.color = '#e3b341';
-      else if (i === 5) td.style.color = ZONE_COLOR[f.zone] || '#8b949e';
+      else if (i === 5) td.style.color = ZONE_COLORS[f.zone] || ZONE_COLORS.unknown;
       else if (i === 8) td.className = 'af-fuel';
       tr.appendChild(td);
     });

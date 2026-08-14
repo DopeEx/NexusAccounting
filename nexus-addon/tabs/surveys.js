@@ -88,7 +88,7 @@ export function renderCollected(t, periodLabel) {
   const noData = !store.totals || !store.totals.missions;
   if (noData) {
     const p = document.createElement('p');
-    p.style.cssText = 'color:#484f58;padding:8px 0';
+    p.className = 'mission-empty-state';
     p.textContent = 'No data yet — log in to ';
     const a = document.createElement('a');
     a.href = 'https://s0.nexuslegacy.space';

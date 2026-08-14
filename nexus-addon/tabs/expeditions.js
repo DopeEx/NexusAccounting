@@ -203,7 +203,7 @@ function renderExpeditionTransit() {
   document.getElementById('e-transit-count').textContent = `${eMissions.length} in flight`;
   if (!eMissions.length) {
     const d = document.createElement('div');
-    d.style.cssText = 'color:#484f58; padding:4px 0;';
+    d.className = 'mission-empty-state';
     d.textContent = 'No expeditions in transit.';
     box.appendChild(d);
     return;
@@ -211,14 +211,15 @@ function renderExpeditionTransit() {
   for (const m of eMissions) {
     const target = m.targetSystemName || m.targetPlanetName || (m.zone ? `${m.zone} (depth ${m.depth ?? '?'})` : `#${m.id}`);
     const row = document.createElement('div');
+    row.className = 'mission-transit-row';
     const head = document.createElement('div');
-    head.style.cssText = 'display:flex; align-items:baseline; gap:8px; font-size:0.85rem; margin-bottom:3px;';
+    head.className = 'mission-transit-heading';
     const name = document.createElement('span');
-    name.style.color = '#e6edf3';
+    name.className = 'mission-transit-name';
     name.textContent = target;
     head.appendChild(name);
     const bar = makeMissionBar(m);
-    bar.el.style.marginTop = '0';
+    bar.el.classList.add('mission-progress-compact');
     row.append(head, bar.el);
     box.appendChild(row);
     eTicks.push(bar.upd);
@@ -286,6 +287,9 @@ export function getExpSeriesForMode(mode) {
 
 export function renderExpeditionsTab() {
   initExpeditionLaunch();
+}
+
+export function renderExpeditionStatsTab() {
   const mode = getMode();
   const periodLabel = periodLabelFor(mode);
   const t = getExpTotalsForMode(mode);
@@ -293,7 +297,7 @@ export function renderExpeditionsTab() {
   el.textContent = '';
   if (!t.missions) {
     const p = document.createElement('p');
-    p.style.cssText = 'color:#484f58;padding:8px 0';
+    p.className = 'mission-empty-state';
     p.textContent = 'No expedition reports recorded yet.';
     el.appendChild(p);
   } else {

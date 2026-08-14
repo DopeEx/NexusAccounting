@@ -633,7 +633,7 @@ export function renderTechTreeTab() {
 
   if (!research.length) {
     const p = document.createElement('p');
-    p.style.cssText = 'color:#484f58;padding:8px 0';
+    p.className = 'mission-empty-state';
     p.textContent = 'No research data yet — open the game then click Scrape Now.';
     container.appendChild(p);
     document.getElementById('tt-summary').textContent = '';

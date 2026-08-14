@@ -56,11 +56,13 @@ function renderLegend() {
   if (!box || box.childElementCount) return;
   for (const { name, color, mines } of Object.values(MINING_SHIPS)) {
     const item = document.createElement('span');
-    item.style.cssText = 'display:inline-flex; align-items:center; gap:6px;';
+    item.className = 'fleet-legend-item';
     const sw = document.createElement('span');
-    sw.style.cssText = `width:11px; height:11px; border-radius:2px; background:${color}; flex:none;`;
+    sw.className = 'fleet-legend-swatch';
+    sw.style.background = color;
     const label = document.createElement('span');
-    label.innerHTML = `<b style="color:${color}">${name}</b> <span style="color:#8b949e">${mines}</span>`;
+    label.className = 'fleet-legend-text';
+    label.innerHTML = `<b>${name}</b> <span>${mines}</span>`;
     item.append(sw, label);
     box.appendChild(item);
   }

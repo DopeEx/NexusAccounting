@@ -342,12 +342,11 @@ export function renderAvailStrip(box, ships, available, emptyMsg) {
   box.appendChild(label);
   for (const s of here) {
     const chip = document.createElement('span');
-    chip.style.cssText = 'display:inline-flex; align-items:center; gap:5px;';
+    chip.className = 'mission-availability-item';
     chip.title = s.name;
     if (s.imageUrl) {
       const img = document.createElement('img');
       img.src = s.imageUrl;
-      img.style.cssText = 'width:22px; height:22px; object-fit:contain;';
       chip.appendChild(img);
     }
     chip.append(document.createTextNode(`${(available[s.shipDefId] || 0).toLocaleString()}× ${s.name}`));
@@ -384,7 +383,28 @@ export function fmtCountdown(ms) {
 }
 
 const MISSION_WORK_LABEL = { survey: 'Surveying', investigate: 'Investigating',
-  collect_debris: 'Collecting', collect_salvage: 'Collecting', expedition: 'Exploring' };
+  collect_debris: 'Collecting', collect_salvage: 'Collecting', expedition: 'Exploring',
+  xeno_survey: 'Surveying ruins' };
+const MISSION_WORK_COLOR = {
+  survey: '#3ec6ff', investigate: '#60a5fa', collect_debris: '#2dd4bf',
+  collect_salvage: '#9b6cff', expedition: '#f0883e', xeno_survey: '#bc8cff',
+};
+const MISSION_WORK_GRADIENT = {
+  survey: 'linear-gradient(90deg, #3ec6ff 0%, #7f77ff 100%)',
+  investigate: 'linear-gradient(90deg, #60a5fa 0%, #6366f1 100%)',
+  collect_debris: 'linear-gradient(90deg, #2dd4bf 0%, #38bdf8 100%)',
+  collect_salvage: 'linear-gradient(90deg, #9b6cff 0%, #c084fc 100%)',
+  expedition: 'linear-gradient(90deg, #f0883e 0%, #e3b341 100%)',
+  xeno_survey: 'linear-gradient(90deg, #bc8cff 0%, #d2a8ff 100%)',
+};
+const MISSION_STAGE_COLOR = {
+  outbound: '#3ec6ff', returning: '#9b6cff', arriving: '#6e7681',
+};
+const MISSION_STAGE_GRADIENT = {
+  outbound: 'linear-gradient(90deg, #3ec6ff 0%, #7f77ff 100%)',
+  returning: 'linear-gradient(90deg, #9b6cff 0%, #c084fc 100%)',
+  arriving: 'linear-gradient(90deg, #6e7681 0%, #8b949e 100%)',
+};
 
 // Where a fleet is in its round trip: outbound (departs→arrives), on-site work
 // (arrives→returnDeparts), or returning (returnDeparts→returnArrives). Returns
@@ -396,35 +416,36 @@ export function missionProgress(m) {
   const rdep = g('returnDepartsAt'), rarr = g('returnArrivesAt');
   const work = MISSION_WORK_LABEL[m.missionType] || 'Working';
   const stages = [];
-  if (dep && arr) stages.push(['En route', '#58a6ff', dep, arr]);
-  if (arr && rdep) stages.push([work, '#f0883e', arr, rdep]);
-  if (rdep && rarr) stages.push(['Returning', '#56d364', rdep, rarr]);
-  for (const [label, color, s, e] of stages) {
-    if (now < e) return { label, color, frac: now <= s ? 0 : Math.min(1, (now - s) / (e - s)), eta: e - now };
+  if (dep && arr) stages.push(['Outbound', MISSION_STAGE_COLOR.outbound, MISSION_STAGE_GRADIENT.outbound, dep, arr]);
+  if (arr && rdep) stages.push([work, MISSION_WORK_COLOR[m.missionType] || '#47d4ff', MISSION_WORK_GRADIENT[m.missionType], arr, rdep]);
+  if (rdep && rarr) stages.push(['Returning', MISSION_STAGE_COLOR.returning, MISSION_STAGE_GRADIENT.returning, rdep, rarr]);
+  for (const [label, color, gradient, s, e] of stages) {
+    if (now < e) return { label, color, gradient, frac: now <= s ? 0 : Math.min(1, (now - s) / (e - s)), eta: e - now };
   }
-  return { label: 'Arriving…', color: '#8b949e', frac: 1, eta: 0 };
+  return { label: 'Arriving…', color: MISSION_STAGE_COLOR.arriving, gradient: MISSION_STAGE_GRADIENT.arriving, frac: 1, eta: 0 };
 }
 
 // Compact inline progress bar for a table cell or transit-list row. Returns
 // { el, upd }; caller registers `upd` somewhere it gets called every second.
 export function makeMissionBar(m) {
   const wrap = document.createElement('div');
-  wrap.style.cssText = 'margin-top:5px; min-width:120px;';
+  wrap.className = 'mission-progress';
   const track = document.createElement('div');
-  track.style.cssText = 'height:6px; border-radius:4px; background:#21262d; overflow:hidden;';
+  track.className = 'mission-progress-track';
   const fill = document.createElement('div');
-  fill.style.cssText = 'height:100%; border-radius:4px; transition:width 0.5s linear;';
+  fill.className = 'mission-progress-fill';
   track.appendChild(fill);
   const cap = document.createElement('div');
-  cap.style.cssText = 'display:flex; justify-content:space-between; gap:6px; font-size:0.7rem; margin-top:2px;';
+  cap.className = 'mission-progress-caption';
   const ph = document.createElement('span'), et = document.createElement('span');
-  et.style.cssText = 'color:#8b949e; font-variant-numeric:tabular-nums;';
+  ph.className = 'mission-progress-phase';
+  et.className = 'mission-progress-eta';
   cap.append(ph, et);
   wrap.append(track, cap);
   const upd = () => {
     const p = missionProgress(m);
     fill.style.width = `${(p.frac * 100).toFixed(1)}%`;
-    fill.style.background = p.color;
+    fill.style.background = p.gradient || p.color;
     ph.textContent = p.label; ph.style.color = p.color;
     et.textContent = p.eta > 0 ? fmtCountdown(p.eta) : '—';
   };
@@ -728,7 +749,10 @@ export function combinedLost(lost) {
 
 export function makeStatCard(label, value, valueClass, valueStyle) {
   const card = document.createElement('div');
-  card.className = 'stat-card';
+  const styleClass = valueStyle?.includes('#ff7b72') ? 'danger'
+    : valueStyle?.includes('#e3b341') ? 'warning'
+      : valueStyle?.includes('#56d364') ? 'positive' : '';
+  card.className = ['stat-card', valueClass, styleClass].filter(Boolean).join(' ');
   const labelDiv = document.createElement('div');
   labelDiv.className = 'label';
   labelDiv.textContent = label;

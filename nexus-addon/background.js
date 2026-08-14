@@ -2128,8 +2128,9 @@ function combatRounds(r) {
 const CORE_RESOURCES = ['ore', 'silicates', 'hydrogen', 'alloys'];
 
 function addResources(target, res) {
+  if (!target.rare) target.rare = {};   // totals saved before `rare` existed lack this
   for (const [k, v] of Object.entries(res)) {
-    if (CORE_RESOURCES.includes(k)) target[k] += v;
+    if (CORE_RESOURCES.includes(k)) target[k] = (target[k] || 0) + v;
     else target.rare[k] = (target.rare[k] || 0) + v;
   }
 }
@@ -2220,6 +2221,7 @@ async function processMiningReports(reports, ships, zones = {}) {
     deliveries: 0, cycles: 0, drill_breakdowns: 0, maintenance_alloys: 0, ships_lost: 0,
     stolen: { ore: 0, silicates: 0, hydrogen: 0, alloys: 0, rare: {} },
   };
+  if (!totals.stolen) totals.stolen = { ore: 0, silicates: 0, hydrogen: 0, alloys: 0, rare: {} };   // totals saved before `stolen` existed lack this
   const dailyMap = {};
   for (const d of (stored.mining_daily || [])) dailyMap[d.day] = { ...d };
   const lost = stored.mining_resources_lost?.destroyed ? stored.mining_resources_lost : emptyLost();
