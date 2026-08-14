@@ -92,7 +92,7 @@ export function renderMiningTab() {
   delivered.textContent = '';
   if (!store.mining_totals || !store.mining_totals.deliveries) {
     const p = document.createElement('p');
-    p.style.cssText = 'color:#484f58;padding:8px 0';
+    p.className = 'mission-empty-state';
     p.textContent = 'No mining deliveries recorded yet.';
     delivered.appendChild(p);
   } else {

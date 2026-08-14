@@ -76,7 +76,7 @@ export function renderWormholesTab() {
   el.textContent = '';
   if (!t.missions) {
     const p = document.createElement('p');
-    p.style.cssText = 'color:#484f58;padding:8px 0';
+    p.className = 'mission-empty-state';
     p.textContent = 'No wormhole runs recorded yet.';
     el.appendChild(p);
   } else {
