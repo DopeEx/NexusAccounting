@@ -189,7 +189,8 @@ body.expert-mode .tabs .expert-only { display: inline-block !important; }
 }
 .status-bar .status-message,
 .status-bar #status-text,
-.status-bar #status-alarm-text {
+.status-bar #status-alarm-text,
+.status-bar #status-sync-text {
   color: #7f8da1;
   white-space: nowrap;
 }
@@ -202,6 +203,12 @@ body.expert-mode .tabs .expert-only { display: inline-block !important; }
   margin-left: 0 !important;
   color: #7f8da1 !important;
   font-size: inherit !important;
+}
+.status-bar #status-sync-text {
+  margin-left: 0;
+  font-size: inherit;
+  font-variant-numeric: normal;
+  letter-spacing: 0;
 }
 .status-alarm-hidden,
 .techtree-launch-planet-hidden,
