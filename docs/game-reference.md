@@ -2,6 +2,9 @@
 
 Complete reference for game systems, buildings, ships, research, and API structures.
 
+For the API routes used by this add-on, request handling, and observed payload
+shapes, see the [API integration reference](./api-reference.md).
+
 ---
 
 ## **API ENDPOINTS STRUCTURE**
@@ -28,7 +31,7 @@ Complete reference for game systems, buildings, ships, research, and API structu
 - `maxFleetSlots`: Total simultaneous active fleets allowed
 
 ### Fleet Fuel Estimate
-**Endpoint:** `GET /api/fleet/fuel-estimate`  
+**Endpoint:** `POST /api/fleet/fuel-estimate`
 **Purpose:** Calculates fuel cost and travel parameters for a proposed fleet dispatch
 
 **Request Structure:**

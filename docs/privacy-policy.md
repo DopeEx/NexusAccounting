@@ -1,6 +1,6 @@
 # Privacy Policy — Nexus Accounting
 
-**Last updated: 2026-06-22**
+**Last updated: 2026-10-11**
 
 Nexus Accounting is a browser extension that reads your Nexus Legacy game data and displays it locally as a personal accounting dashboard. This policy describes exactly what data the extension accesses, how it is used, and where it goes.
 
@@ -8,7 +8,7 @@ Nexus Accounting is a browser extension that reads your Nexus Legacy game data a
 
 ## 1. Data collected
 
-The extension reads the following data from the Nexus Legacy game API (`s0.nexuslegacy.space`) on your behalf:
+The extension reads the following data from the currently selected Nexus Legacy game server (for example, `s0.nexuslegacy.space`) on your behalf:
 
 | Category | Examples |
 |---|---|
@@ -19,8 +19,11 @@ The extension reads the following data from the Nexus Legacy game API (`s0.nexus
 | Planets & buildings | Your planets, their buildings (to read lab levels), and stationed fleets |
 | Galaxy map | System names, security zones, arm/sector coordinates (for zone tagging and the planet finder) |
 | Fuel logs | Hydrogen cost per launched mission (type, zone, amount) |
+| Player and alliance data | Player identity, alliance details, and ranking data used by the finder |
+| Trade and logistics | Market orders and trades, logistics outposts, moons, and related fleet/resource state |
+| System activity | System messages and debris data used by exploration and collection features |
 
-The extension also reads your `nexus_token` session cookie from `nexuslegacy.space` to authenticate those API requests. No other cookies are read, and no cookies are written or modified.
+The extension does not read or extract the session cookie. It sends API requests through your logged-in game tab, where the browser attaches the game's HttpOnly session cookie. The extension does not write or modify cookies.
 
 ---
 
@@ -31,7 +34,7 @@ All data is used **solely to operate the extension's dashboard** on your own dev
 - Build aggregated statistics (resources collected, ships lost, fuel spent, etc.)
 - Render charts, history tables, and the tech-tree planner
 - Run the offline combat simulator
-- Drive the planet-finder galaxy scan
+- Support the planet finder, asteroid scans, fleet logistics, and market views
 
 No data is used for advertising, profiling, or any purpose unrelated to displaying your own game statistics back to you.
 
@@ -53,7 +56,7 @@ The extension also writes automatic backup files to your `Downloads/NexusAccount
 
 ## 5. Write operations
 
-The extension makes one type of write call to the game API: posting a research job when you click **Launch** in the tech-tree planner (`POST /api/research/{id}/start`). A confirmation dialog is shown before this action is taken. All other API calls are read-only.
+The extension reads game data and sends state-changing requests only when you use the corresponding feature. Examples include launching fleet missions, collecting debris or salvage, starting research, and sending resources through logistics. It also sends a `POST /api/fleet/fuel-estimate` request to calculate dispatch requirements; this calculation does not launch a fleet. The game API is authoritative for validating and applying these actions.
 
 ---
 
@@ -71,10 +74,10 @@ Backup files in your Downloads folder are not deleted automatically; you can del
 
 ## 7. Security
 
-All communication with the game API uses HTTPS. Your session token is read from the browser's cookie store and transmitted only to `nexuslegacy.space`. The extension does not expose your token to any other origin.
+All communication with the game API uses HTTPS. Requests are made through the logged-in game tab, and the browser attaches the game's HttpOnly session cookie. The extension does not read, copy, or expose the session cookie to another origin.
 
 ---
 
 ## 8. Contact
 
-If you have questions about this policy, open an issue at [github.com/Verroq/NexusAccounting](https://github.com/Verroq/NexusAccounting).
+If you have questions about this policy, open an issue in the [DopeEx/NexusAccounting repository](https://github.com/DopeEx/NexusAccounting/issues).
