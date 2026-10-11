@@ -225,6 +225,12 @@ export async function initScoutingTab() {
     input.value = savedSel[id] ?? 0;
     input.addEventListener('change', e => { rememberSelection(id, e.target.value); });
   }
+  const maxTravelDebris = document.getElementById('sc-max-travel-debris');
+  maxTravelDebris.value = savedSel['sc-max-travel-debris'] ?? 0;
+  maxTravelDebris.addEventListener('change', e => { rememberSelection('sc-max-travel-debris', e.target.value); });
+  const debrisFilterMode = document.getElementById('sc-debris-filter-mode');
+  debrisFilterMode.value = savedSel['sc-debris-filter-mode'] === 'or' ? 'or' : 'and';
+  debrisFilterMode.addEventListener('change', e => { rememberSelection('sc-debris-filter-mode', e.target.value); });
   document.getElementById('sc-slot-reserve').value = savedSel['sc-slot-reserve'] || 0;
   document.getElementById('sc-slot-reserve').addEventListener('change', e => { rememberSelection('sc-slot-reserve', e.target.value); });
 
@@ -492,6 +498,8 @@ async function automateDebris() {
   scAutoDebrisRunning = true;
   const maxDebrisCount = getMaxMissions('debris');
   const minDebrisTotal = getMinResourceTotal('debris');
+  const maxTravelTimeMinutes = getMaxTravelTimeMinutes();
+  const filterMode = document.getElementById('sc-debris-filter-mode').value;
   try {
     const status = document.getElementById('sc-debris-status');
     const mi = await browser.runtime.sendMessage({ type: 'GET_MISSIONS' });
@@ -515,17 +523,31 @@ async function automateDebris() {
     const now = Date.now();
     const pending = (debris_fields || [])
       .map(field => ({ ...field, total: (field.ore || 0) + (field.silicates || 0) + (field.alloys || 0) }))
-      .filter(field => field.debrisId != null && field.systemId != null && field.total >= minDebrisTotal && field.total > 0
+      .filter(field => field.debrisId != null && field.systemId != null && field.total > 0
         && (!field.expires || new Date(field.expires) > now)
         && !inflight.has(field.systemId) && !scJustCollected.has(field.debrisId))
       .sort((a, b) => b.total - a.total);
     if (!pending.length) { setStatusText(status, 'No uncollected debris to collect.'); return; }
 
-    setStatusText(status, `Collecting debris at ${pending[0].system}…`);
-    await collectDebris(pending[0], true);
+    for (const field of pending) {
+      setStatusText(status, `Checking debris filters for ${field.system}…`);
+      const result = await collectDebris(field, true, {
+        minTotal: minDebrisTotal,
+        maxTravelTimeMinutes,
+        mode: filterMode,
+      });
+      if (result === 'sent' || result === 'error') return;
+    }
+    setStatusText(status, 'No uncollected debris matches the automatic collection filters.');
   } finally {
     scAutoDebrisRunning = false;
   }
+}
+
+function getMaxTravelTimeMinutes() {
+  const el = document.getElementById('sc-max-travel-debris');
+  const value = el ? Number(el.value) : NaN;
+  return Number.isInteger(value) && value >= 0 ? value : 0;
 }
 
 
@@ -564,11 +586,18 @@ async function templateShips(templateId, planetId) {
 
   const av = await browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId });
   if (av.error) return { error: av.error };
-  const ships = wanted
-    .map(s => ({ shipDefId: s.shipDefId, quantity: Math.min(s.quantity, av.available[s.shipDefId] || 0) }))
-    .filter(s => s.quantity > 0);
+  const { ships, short } = capShipsToAvailable(wanted, av.available);
   if (!ships.length) return { error: `None of template "${tpl.name}"'s ships are on this planet.` };
-  return { ships, short: wanted.some(s => (av.available[s.shipDefId] || 0) < s.quantity), name: tpl.name };
+  return { ships, short, name: tpl.name };
+}
+
+function capShipsToAvailable(ships, available) {
+  return {
+    ships: ships
+      .map(s => ({ shipDefId: s.shipDefId, quantity: Math.min(s.quantity, available[s.shipDefId] || 0) }))
+      .filter(s => s.quantity > 0),
+    short: ships.some(s => (available[s.shipDefId] || 0) < s.quantity),
+  };
 }
 
 // Clickable zone toggles, coloured per zone (mirrors the Asteroids filter).
@@ -911,16 +940,14 @@ async function computeFuel() {
   const planetId = Number(document.getElementById('sc-planet').value);
   const fuelCells = () => document.querySelectorAll('#sc-surveys-list .sc-fuel');
   const timeCells = () => document.querySelectorAll('#sc-surveys-list .sc-time');
-  // Estimate uses the template as designed (not capped to the planet's stock).
-  const tpl = scTemplates.find(t => String(t.id) === document.getElementById('sc-inv-template').value);
-  const ships = Object.entries(tpl ? tpl.ships : {})
-    .map(([shipDefId, quantity]) => ({ shipDefId: Number(shipDefId), quantity }))
-    .filter(s => s.quantity > 0);
-  if (!ships.length) {
-    fuelCells().forEach(c => { c.textContent = '—'; c.title = tpl ? 'Template has no ships' : 'No template selected'; });
+  const r = await templateShips(document.getElementById('sc-inv-template').value, planetId);
+  if (gen !== fuelGen) return;
+  if (r.error) {
+    fuelCells().forEach(c => { c.textContent = '—'; c.title = r.error; });
     timeCells().forEach(c => { c.textContent = '—'; });
     return;
   }
+  const ships = r.ships;
 
   for (const tr of document.querySelectorAll('#sc-surveys-list .sc-inv-card')) {
     if (gen !== fuelGen) return;
@@ -928,7 +955,7 @@ async function computeFuel() {
     const timeCell = tr.querySelector('.sc-time');
     const sysId = Number(tr.dataset.system);
     if (!cell || !sysId) continue;
-    const est = await fuelEstimate(planetId, sysId, ships);
+    const est = await fuelEstimate(planetId, sysId, ships, 'investigate');
     if (gen !== fuelGen) return;
     if (est.error) { cell.textContent = '—'; cell.title = est.error; if (timeCell) timeCell.textContent = '—'; continue; }
     cell.textContent = `${est.fuelCost}`;
@@ -1429,6 +1456,7 @@ async function computeDebrisFuel() {
     return;
   }
   const nameOf = id => (scCargoShips.find(c => c.shipDefId === id) || {}).name || '#' + id;
+  const availabilityByPlanet = new Map();
   for (const tr of document.querySelectorAll('#sc-debris-list .sc-debris-card')) {
     if (gen !== debrisFuelGen) return;
     const ships = planFleet(Number(tr.dataset.total) || 0, cargo);
@@ -1446,7 +1474,24 @@ async function computeDebrisFuel() {
     const srcId = debrisSourcePlanet(sysId)?.id;
     if (!cell || !sysId || !srcId) continue;
     if (!ships.length) { cell.textContent = '—'; if (timeCell) timeCell.textContent = '—'; continue; }
-    const est = await fuelEstimate(srcId, sysId, ships);
+    let av = availabilityByPlanet.get(srcId);
+    if (!av) {
+      av = await browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId: srcId });
+      if (gen !== debrisFuelGen) return;
+      availabilityByPlanet.set(srcId, av);
+    }
+    if (av.error) {
+      cell.textContent = '—'; cell.title = av.error;
+      if (timeCell) timeCell.textContent = '—';
+      continue;
+    }
+    const capped = capShipsToAvailable(ships, av.available).ships;
+    if (!capped.length) {
+      cell.textContent = '—'; cell.title = 'None of the selected cargo ships are on this planet.';
+      if (timeCell) timeCell.textContent = '—';
+      continue;
+    }
+    const est = await fuelEstimate(srcId, sysId, capped, 'collect_debris');
     if (gen !== debrisFuelGen) return;
     if (est.error) { cell.textContent = '—'; cell.title = est.error; if (timeCell) timeCell.textContent = '—'; continue; }
     cell.textContent = `${est.fuelCost}`;
@@ -1456,26 +1501,46 @@ async function computeDebrisFuel() {
   }
 }
 
-async function collectDebris(field, automated = false) {
+async function collectDebris(field, automated = false, filters = {}) {
   const status = document.getElementById('sc-progress');
   const planet = debrisSourcePlanet(field.systemId);
-  if (!planet) { setStatusText(status, 'No source planet found for this field.'); return; }
+  if (!planet) { setStatusText(status, 'No source planet found for this field.'); return 'error'; }
+
   const planetId = planet.id;
 
   const cargo = selectedCargo();
   const plan = planFleet(field.total, cargo);
-  if (!plan.length) { setStatusText(status, 'Select cargo ships above first.'); return; }
+  if (!plan.length) { setStatusText(status, 'Select cargo ships above first.'); return 'error'; }
 
   // Cap to what the source planet actually has; warn if that can't carry it all.
   const av = await browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId });
-  if (av.error) { setStatusText(status, `Error: ${av.error}`); return; }
+  if (av.error) { setStatusText(status, `Error: ${av.error}`); return 'error'; }
   const capOf = id => (scCargoShips.find(s => s.shipDefId === id) || {}).cap || 0;
-  const ships = plan
-    .map(s => ({ shipDefId: s.shipDefId, quantity: Math.min(s.quantity, av.available[s.shipDefId] || 0) }))
-    .filter(s => s.quantity > 0);
-  if (!ships.length) { setStatusText(status, 'None of the selected cargo ships are on this planet.'); return; }
+  const { ships, short: fleetShort } = capShipsToAvailable(plan, av.available);
+  if (!ships.length) { setStatusText(status, 'None of the selected cargo ships are on this planet.'); return 'skip'; }
   const carried = ships.reduce((sum, s) => sum + s.quantity * capOf(s.shipDefId), 0);
-  const short = carried < field.total;
+  const short = fleetShort || carried < field.total;
+
+  if (automated) {
+    const minActive = filters.minTotal > 0;
+    const timeActive = filters.maxTravelTimeMinutes > 0;
+    const minMatches = !minActive || field.total >= filters.minTotal;
+    const needsTravelEstimate = timeActive && (filters.mode === 'and' || !minMatches);
+    let timeMatches = !timeActive;
+    if (needsTravelEstimate) {
+      const est = await fuelEstimate(planetId, field.systemId, ships, 'collect_debris');
+      if (est.error || !Number.isFinite(est.travelTime)) {
+        const reason = est.error || 'Travel time estimate is unavailable.';
+        setStatusText(status, `Cannot verify travel time to ${field.system}: ${reason}`);
+        return 'error';
+      }
+      timeMatches = est.inRange !== false && est.travelTime <= filters.maxTravelTimeMinutes * 60;
+    }
+    const matches = minActive && timeActive
+      ? filters.mode === 'or' ? minMatches || timeMatches : minMatches && timeMatches
+      : minActive ? minMatches : timeActive ? timeMatches : true;
+    if (!matches) return 'skip';
+  }
 
   if (!automated && !await confirmDialog(`Collect debris at ${field.system} (${field.total.toLocaleString()} cargo)?\n\n` +
     `From: ${planet ? planet.name : planetId}` +
@@ -1490,9 +1555,9 @@ async function collectDebris(field, automated = false) {
     // If humation is required, show the status message in red
     if (String(res.error).includes('Human verification')) {
       disableAutomaticsOnHumanCheck();
-      setStatusText(status, msg, 'error'); return;
+      setStatusText(status, msg, 'error'); return 'error';
     }
-    setStatusText(status, msg, 'warning'); return;
+    setStatusText(status, msg, 'warning'); return 'error';
   }
   scJustCollected.add(field.debrisId);
   if (field.systemId != null) scCollecting.set(field.systemId, { field: { ...field }, seenRun: false });
@@ -1505,6 +1570,7 @@ async function collectDebris(field, automated = false) {
   // the game's brief post-POST API lag.
   loadActiveSurveys();
   setTimeout(loadActiveSurveys, 2000);
+  return 'sent';
 }
 
 // ── Uncollected salvage ─────────────────────────────────────────────────────
@@ -1653,6 +1719,7 @@ async function computeSalvageFuel() {
     return;
   }
   const nameOf = id => (scCargoShips.find(c => c.shipDefId === id) || {}).name || '#' + id;
+  let availability;
   for (const tr of document.querySelectorAll('#sc-salvage-list .sc-salvage-card')) {
     if (gen !== salvageFuelGen) return;
     const ships = planFleet(Number(tr.dataset.total) || 0, cargo);
@@ -1669,7 +1736,23 @@ async function computeSalvageFuel() {
     const sysId = Number(tr.dataset.system);
     if (!cell || !sysId) continue;
     if (!ships.length) { cell.textContent = '—'; if (timeCell) timeCell.textContent = '—'; continue; }
-    const est = await fuelEstimate(planetId, sysId, ships);
+    if (!availability) {
+      availability = await browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId });
+      if (gen !== salvageFuelGen) return;
+    }
+    const av = availability;
+    if (av.error) {
+      cell.textContent = '—'; cell.title = av.error;
+      if (timeCell) timeCell.textContent = '—';
+      continue;
+    }
+    const capped = capShipsToAvailable(ships, av.available).ships;
+    if (!capped.length) {
+      cell.textContent = '—'; cell.title = 'None of the selected cargo ships are on this planet.';
+      if (timeCell) timeCell.textContent = '—';
+      continue;
+    }
+    const est = await fuelEstimate(planetId, sysId, capped, 'collect_salvage');
     if (gen !== salvageFuelGen) return;
     if (est.error) { cell.textContent = '—'; cell.title = est.error; if (timeCell) timeCell.textContent = '—'; continue; }
     cell.textContent = `${est.fuelCost}`;
@@ -1690,9 +1773,7 @@ async function collectSalvage(salvage) {
   // Cap to what the source planet has; warn if that can't carry it all.
   const av = await browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId });
   if (av.error) { setStatusText(status, `Error: ${av.error}`); return; }
-  const ships = plan
-    .map(s => ({ shipDefId: s.shipDefId, quantity: Math.min(s.quantity, av.available[s.shipDefId] || 0) }))
-    .filter(s => s.quantity > 0);
+  const { ships } = capShipsToAvailable(plan, av.available);
   if (!ships.length) { setStatusText(status, 'None of the selected cargo ships are on this planet.'); return; }
 
   setStatusText(status, `Collecting salvage at ${salvage.system}…`);

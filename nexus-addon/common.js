@@ -504,16 +504,18 @@ export function infoDialog(title, body) {
   ok.focus();
 }
 
-// Fuel estimate, cached per source+destination+ships so a known route with the
-// selected template never re-hits the API. Errors aren't cached (so they retry).
+// Fuel estimate, cached per route+fleet+mission so the server's mission-specific
+// travel time is not reused for a different mission. Errors aren't cached.
 const _fuelCache = new Map();
-export async function fuelEstimate(sourcePlanetId, targetSystemId, ships) {
+export async function fuelEstimate(sourcePlanetId, targetSystemId, ships, missionType) {
   const sig = ships.map(s => `${s.shipDefId}:${s.quantity}`).sort().join(',');
-  const key = `${sourcePlanetId}|${targetSystemId}|${sig}`;
+  const key = `${sourcePlanetId}|${targetSystemId}|${sig}|${missionType || ''}`;
   if (_fuelCache.has(key)) return _fuelCache.get(key);
+  const body = { sourcePlanetId, targetSystemId, ships };
+  if (missionType) body.missionType = missionType;
   const est = await browser.runtime.sendMessage({
     type: 'GET_FUEL_ESTIMATE',
-    body: { sourcePlanetId, targetSystemId, ships },
+    body,
   });
   if (!est.error) _fuelCache.set(key, est);
   return est;
