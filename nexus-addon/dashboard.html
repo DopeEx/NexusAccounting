@@ -887,6 +887,15 @@
         <label class="panel-toolbar-field" title="Minimum total resources required for automatic debris collection">Min total
           <input type="number" id="sc-min-total-debris" class="panel-toolbar-input panel-toolbar-input-wide" min="0" step="1" value="0">
         </label>
+        <label class="panel-toolbar-field" title="Choose whether debris must match both active filters or either one">Match
+          <select id="sc-debris-filter-mode" class="panel-toolbar-input">
+            <option value="and">AND</option>
+            <option value="or">OR</option>
+          </select>
+        </label>
+        <label class="panel-toolbar-field" title="Only automatically collect debris with an estimated travel time at or below this limit. 0 disables the limit.">Max travel (min)
+          <input type="number" id="sc-max-travel-debris" class="panel-toolbar-input" min="0" step="1" value="0">
+        </label>
         <span id="sc-debris-status" class="panel-toolbar-status">Status: -</span>
       </div>
       <div id="sc-debris-list" class="sc-debris-list"></div>
