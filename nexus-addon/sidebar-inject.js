@@ -232,7 +232,7 @@ function recommend(m, excavator) {
 }
 // Confirmation dialog with the fleet composition — mirrors common.js
 // confirmDialog so a send from this window looks like one from the dashboard.
-function lsConfirm(message, ships, defs, altLabel) {
+function lsConfirm(message, ships, defs, altLabel, untilFullState = null, escortRetreatThresholdState = null) {
   return new Promise(resolve => {
     const ov = document.createElement('div');
     ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:2147483647;display:flex;align-items:center;justify-content:center';
@@ -264,6 +264,40 @@ function lsConfirm(message, ships, defs, altLabel) {
         row.append(chip);
       }
       box.append(row);
+    }
+    if (untilFullState) {
+      const untilFullLabel = document.createElement('label');
+      untilFullLabel.title = 'Keep mining past the usual 10 cycles until the mining hold is full or the field is depleted';
+      untilFullLabel.style.cssText = 'margin-top:12px;display:flex;align-items:center;gap:6px;color:#8b949e;font-size:0.85rem;cursor:pointer;white-space:normal';
+      const untilFullCheckbox = document.createElement('input');
+      untilFullCheckbox.type = 'checkbox';
+      untilFullCheckbox.checked = !!untilFullState.untilFull;
+      untilFullCheckbox.addEventListener('change', () => {
+        untilFullState.untilFull = untilFullCheckbox.checked;
+      });
+      untilFullLabel.append(untilFullCheckbox, document.createTextNode('Mine until full'));
+      box.append(untilFullLabel);
+    }
+    if (escortRetreatThresholdState) {
+      const retreatLabel = document.createElement('label');
+      retreatLabel.title = 'If pirates damage the escort past this threshold, the fleet returns early and mining stops. Pirates may still steal cargo.';
+      retreatLabel.style.cssText = 'margin-top:8px;display:flex;align-items:center;gap:6px;color:#8b949e;font-size:0.85rem;cursor:pointer;white-space:normal';
+      retreatLabel.append(document.createTextNode('Withdraw escort by damage threshold'));
+      const retreatSelect = document.createElement('select');
+      retreatSelect.style.cssText = 'background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:3px 6px;border-radius:6px;font-size:0.85rem';
+      for (const [value, label] of [[null, 'Off'], [30, '30%'], [50, '50%'], [70, '70%']]) {
+        const option = document.createElement('option');
+        option.value = value == null ? '' : String(value);
+        option.textContent = label;
+        option.selected = value === escortRetreatThresholdState.threshold;
+        retreatSelect.append(option);
+      }
+      retreatSelect.addEventListener('change', () => {
+        const value = Number(retreatSelect.value);
+        escortRetreatThresholdState.threshold = [30, 50, 70].includes(value) ? value : null;
+      });
+      retreatLabel.append(retreatSelect);
+      box.append(retreatLabel);
     }
     const btns = document.createElement('div');
     btns.style.cssText = 'margin-top:18px;display:flex;gap:10px;justify-content:flex-end;white-space:normal';
@@ -355,6 +389,12 @@ async function openFieldsPanel() {
   }
   let tpl = templates.find(t => String(t.id) === String((template_selections || {})['af-template-select'])) || templates[0] || null;
   let excavator = localStorage.getItem('nx-ls-excavator') === '1';   // +20% capacity toggle
+  const savedUntilFull = localStorage.getItem('nx-ls-until-full');
+  let untilFull = savedUntilFull == null || savedUntilFull === '1';
+  const savedRetreatThreshold = localStorage.getItem('nx-ls-escort-retreat-threshold');
+  let escortRetreatThreshold = savedRetreatThreshold == null
+    ? 50
+    : [30, 50, 70].includes(Number(savedRetreatThreshold)) ? Number(savedRetreatThreshold) : null;
 
   // "Already mining" row highlight: fields we already control, or with an
   // active mine mission en route. Mirrors the Asteroids tab's criteria.
@@ -565,11 +605,21 @@ async function openFieldsPanel() {
       mineBtn.onclick = async () => {
         if (!canMine) return;
         const short = ships.some(s => (avail[s.shipDefId] || 0) < s.quantity);
+        const untilFullState = { untilFull };
+        const escortRetreatThresholdState = { threshold: escortRetreatThreshold };
         const r = await lsConfirm(
           `Send fleet?\nTo: ${m.name} (${m.system})\nFrom: ${planetName}` +
           (short ? '\n\n⚠ Some ships are short on this planet; sending what is available.' : ''),
-          ships, shipDefs);
+          ships, shipDefs, null, untilFullState, escortRetreatThresholdState);
         if (!r) return;
+        untilFull = untilFullState.untilFull;
+        localStorage.setItem('nx-ls-until-full', untilFull ? '1' : '0');
+        escortRetreatThreshold = escortRetreatThresholdState.threshold;
+        if (escortRetreatThreshold == null) {
+          localStorage.removeItem('nx-ls-escort-retreat-threshold');
+        } else {
+          localStorage.setItem('nx-ls-escort-retreat-threshold', String(escortRetreatThreshold));
+        }
         const sendShips = ships;
         // Reflect the sent fleet in the shared editor (escorts kept, miners swapped).
         shipsState.clear();
@@ -578,6 +628,8 @@ async function openFieldsPanel() {
         mineBtn.disabled = true; mineBtn.textContent = '…';
         const res = await ext.runtime.sendMessage({
           type: 'SEND_MINE', sourcePlanetId: planetId, targetFieldId: m.id, ships: sendShips, miningDuration: 600,
+          mineUntilFull: untilFull,
+          escortRetreatThreshold,
         });
         if (res && res.error) { mineBtn.textContent = '⛏'; mineBtn.disabled = false; window.alert(`Send failed: ${res.error}`); }
         else {

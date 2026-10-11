@@ -38,6 +38,36 @@ All data is stored locally in `browser.storage.local`. Nothing is sent anywhere.
 
 Use the **View** selector (All time / Daily / Hourly) to filter all stats and charts to the latest day or hour.
 
+### Escort templates
+
+Fleet templates can be marked as escorts for one or more asteroid-field security
+zones. In **Fleet Templates**, select the applicable zone and, when appropriate,
+enable **Per mining ship** to store the ship quantities as escort ratios. When
+launching a mining fleet for a matching zone, the fleet editor offers the
+configured escort templates and calculates the required ships from the selected
+mining fleet. The **Auto-add** option persists its choice and automatically
+adds the alphabetically first matching escort template when the dialog opens or
+the mining fleet is optimised. The mining dialog can also remember **Auto-optimise
+mining fleet** and **Excavator +20%**; when enabled, it applies the recommendation
+on open and includes one available Excavator. Active mining missions are marked
+in the asteroid-field table. The mining confirmation dialog also offers **Mine until
+full**, which keeps mining past the usual ten cycles until the fleet's mining
+hold is full or the field is depleted. Its **Withdraw escort by damage
+threshold** menu optionally returns the fleet early at 30%, 50%, or 70% escort
+damage; mining stops, although pirates may still steal cargo.
+
+Completed Asteroids scans are cached for 15 minutes. When the tab is opened
+again with the same source planet selected, the valid cached fields are shown
+immediately; use **Scan** to refresh them.
+
+When one or more Asteroids zone filters are selected, **Nearest systems** means
+the nearest explored systems in those zones, not merely the nearest systems
+overall with non-matching results hidden afterward.
+
+With one or more resource-type filters selected, a scan continues until it has
+found the requested number of systems containing those field types, or has
+checked 500 systems. Requests remain sequential and use the normal scan delay.
+
 ## Settings
 
 - **Records cap**: max survey reports kept locally. Oldest are dropped when limit is reached. Set to `0` for unlimited.
@@ -59,6 +89,3 @@ Web UI made with Claude Opus 4.8
 ## License
 
 [Mozilla Public License](https://www.mozilla.org/en-US/MPL/2.0/)
-
-
-

@@ -116,7 +116,11 @@ export async function confirmDialog(message, ships) {
 // source planet; each quantity is capped to availability. `seed` is
 // {shipDefId → wanted qty}, `avail` is {shipDefId → count on planet}. Resolves
 // to [{shipDefId, quantity}] on confirm (send once), or null on cancel.
-export async function editFleetDialog({ title, subtitle = '', avail = {}, seed = {}, recShips = [], miningShipIds = null }) {
+export async function editFleetDialog({
+  title, subtitle = '', avail = {}, seed = {}, recShips = [], miningShipIds = null,
+  excavatorShipDefId = null, excavatorBonus = 1.2, escortTemplates = [], autoEscortTemplate = null, untilFullState = null,
+  escortRetreatThresholdState = null,
+}) {
   const defs = await shipDefs();
   const ids = [...new Set([
     ...Object.keys(seed).map(Number),
@@ -154,7 +158,116 @@ export async function editFleetDialog({ title, subtitle = '', avail = {}, seed =
       rows.style.color = '#8b949e';
     }
     const ok = document.createElement('button');   // declared early for refresh()
-    const refresh = () => { ok.disabled = !effective().length; ok.style.opacity = ok.disabled ? '0.5' : '1'; };
+    let escortButtonRow = null;
+    let escortLabel = null;
+    const excavatorAvailable = excavatorShipDefId != null && (avail[excavatorShipDefId] || 0) > 0;
+    let excavatorEnabled = excavatorAvailable && localStorage.getItem('nx-af-excavator') === '1';
+
+    const templateCoverage = (template) => {
+      const entries = Object.entries(template.ships || {});
+      if (!entries.length) return 0;
+      if (!template.escortPerMiner) {
+        return entries.every(([id, quantity]) =>
+          (state.get(Number(id)) || 0) >= Math.ceil(quantity)) ? Infinity : 0;
+      }
+      return Math.min(...entries.map(([id, ratio]) =>
+        ratio > 0 ? Math.floor((state.get(Number(id)) || 0) / ratio) : Infinity));
+    };
+
+    const applyEscortTemplate = (template, exact = false) => {
+      const minerCount = miningShipIds
+        ? [...miningShipIds].reduce((total, id) => total + (state.get(id) || 0), 0)
+        : 0;
+      for (const [idString, quantity] of Object.entries(template.ships || {})) {
+        const id = Number(idString);
+        const required = template.escortPerMiner
+          ? Math.ceil(quantity * minerCount)
+          : Math.ceil(quantity);
+        const nextQuantity = Math.min(
+          exact ? required : Math.max(state.get(id) || 0, required),
+          avail[id] || 0,
+        );
+        const input = inputs.get(id);
+        if (nextQuantity > 0) state.set(id, nextQuantity);
+        else state.delete(id);
+        if (input) input.value = String(nextQuantity);
+      }
+    };
+
+    const rebuildEscortButtons = () => {
+      if (!escortButtonRow) return;
+      escortButtonRow.textContent = '';
+      const minerCount = miningShipIds
+        ? [...miningShipIds].reduce((total, id) => total + (state.get(id) || 0), 0)
+        : 0;
+      const hasPerMiner = escortTemplates.some(template => template.escortPerMiner);
+      escortLabel.textContent = hasPerMiner
+        ? `Escort for this zone (${minerCount} miner${minerCount === 1 ? '' : 's'}):`
+        : 'Escort for this zone:';
+
+      const coverage = escortTemplates.reduce((total, template) =>
+        total + Math.min(minerCount, templateCoverage(template)), 0);
+      const allCovered = minerCount === 0 || coverage >= minerCount;
+      ok.style.borderColor = allCovered ? '#2ea043' : '#f85149';
+      ok.style.background = allCovered ? '#238636' : '#da3633';
+
+      for (const template of escortTemplates) {
+        const entries = Object.entries(template.ships || {});
+        const otherCoverage = escortTemplates
+          .filter(other => other !== template)
+          .reduce((total, other) => total + Math.min(minerCount, templateCoverage(other)), 0);
+        const remainingMiners = Math.max(0, minerCount - Math.min(minerCount, otherCoverage));
+        const required = (quantity) => template.escortPerMiner
+          ? Math.ceil(quantity * remainingMiners)
+          : Math.ceil(quantity);
+        const canFill = entries.length > 0 && entries.every(([id, quantity]) =>
+          (avail[Number(id)] || 0) >= required(quantity));
+        const color = canFill ? '#56d364' : '#ff7b72';
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = template.name;
+        button.style.cssText = `padding:4px 12px;border-radius:6px;border:1px solid ${color};background:transparent;color:${color};cursor:pointer;font-size:0.82rem;white-space:nowrap;`;
+        button.title = canFill
+          ? `Apply "${template.name}"`
+          : `Cannot fully fill "${template.name}" — not enough ships on planet`;
+        button.onclick = () => {
+          applyEscortTemplate(template);
+          refresh();
+        };
+        escortButtonRow.append(button);
+      }
+    };
+
+    const refresh = () => {
+      ok.disabled = !effective().length;
+      ok.style.opacity = ok.disabled ? '0.5' : '1';
+      rebuildEscortButtons();
+    };
+    const optimiseMiningFleet = () => {
+      for (const id of miningShipIds || []) {
+        state.delete(id);
+        const input = inputs.get(id);
+        if (input) input.value = '0';
+      }
+      const recommendedShips = excavatorEnabled
+        ? recShips.map(ship => ({ ...ship, quantity: Math.ceil(ship.quantity / excavatorBonus) }))
+        : recShips;
+      if (excavatorEnabled && excavatorAvailable) {
+        recommendedShips.push({ shipDefId: excavatorShipDefId, quantity: 1 });
+      }
+      for (const ship of recommendedShips) {
+        const quantity = Math.min(ship.quantity, avail[ship.shipDefId] || 0);
+        const input = inputs.get(ship.shipDefId);
+        if (quantity > 0) {
+          state.set(ship.shipDefId, quantity);
+          if (input) input.value = String(quantity);
+        }
+      }
+      if (autoEscortTemplate && localStorage.getItem('nx-af-auto-escort') === '1') {
+        applyEscortTemplate(autoEscortTemplate, true);
+      }
+      refresh();
+    };
     const inputs = new Map();   // shipDefId → its qty <input>, so "Optimise" can update rows in place
     for (const id of ids) {
       const def = defs[id] || {};
@@ -187,9 +300,38 @@ export async function editFleetDialog({ title, subtitle = '', avail = {}, seed =
       inputs.set(id, inp);
     }
     box.append(rows);
+    if (escortTemplates.length) {
+      const escortSection = document.createElement('div');
+      escortSection.style.cssText = 'margin-top:10px;padding-top:8px;border-top:1px solid #30363d;';
+      escortLabel = document.createElement('div');
+      escortLabel.style.cssText = 'font-size:0.78rem;color:#8b949e;margin-bottom:6px;';
+      escortButtonRow = document.createElement('div');
+      escortButtonRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;';
+      escortSection.append(escortLabel, escortButtonRow);
+      if (autoEscortTemplate) {
+        let autoEscort = localStorage.getItem('nx-af-auto-escort') === '1';
+        const autoLabel = document.createElement('label');
+        autoLabel.style.cssText = 'display:inline-flex;align-items:center;gap:5px;margin-top:8px;font-size:0.82rem;color:#8b949e;cursor:pointer';
+        autoLabel.title = `Automatically add "${autoEscortTemplate.name}" when opening or optimising this mining fleet`;
+        const autoCheckbox = document.createElement('input');
+        autoCheckbox.type = 'checkbox';
+        autoCheckbox.checked = autoEscort;
+        autoCheckbox.addEventListener('change', () => {
+          autoEscort = autoCheckbox.checked;
+          localStorage.setItem('nx-af-auto-escort', autoEscort ? '1' : '0');
+          if (autoEscort) {
+            applyEscortTemplate(autoEscortTemplate, true);
+            refresh();
+          }
+        });
+        autoLabel.append(autoCheckbox, document.createTextNode(`Auto-add ${autoEscortTemplate.name}`));
+        escortSection.append(autoLabel);
+      }
+      box.append(escortSection);
+    }
 
     const btns = document.createElement('div');
-    btns.style.cssText = 'margin-top:18px;display:flex;gap:10px;justify-content:flex-end';
+    btns.style.cssText = 'margin-top:18px;display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end';
     const mk = (b, label, primary) => {
       b.textContent = label;
       b.style.cssText = `padding:7px 16px;border-radius:6px;border:1px solid #39405a;cursor:pointer;${primary ? 'background:#238636;color:#fff;border-color:#2ea043' : 'background:#2a3146;color:#e6e8ee'}`;
@@ -197,35 +339,94 @@ export async function editFleetDialog({ title, subtitle = '', avail = {}, seed =
     };
     const cancel = mk(document.createElement('button'), 'Cancel', false);
     mk(ok, 'Send', true);
+    if (untilFullState) {
+      const untilFullLabel = document.createElement('label');
+      untilFullLabel.title = 'Keep mining past the usual 10 cycles until the mining hold is full or the field is depleted';
+      untilFullLabel.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:12px;color:#8b949e;font-size:0.85rem;cursor:pointer';
+      const untilFullCheckbox = document.createElement('input');
+      untilFullCheckbox.type = 'checkbox';
+      untilFullCheckbox.checked = !!untilFullState.untilFull;
+      untilFullCheckbox.addEventListener('change', () => {
+        untilFullState.untilFull = untilFullCheckbox.checked;
+      });
+      untilFullLabel.append(untilFullCheckbox, document.createTextNode('Mine until full'));
+      box.append(untilFullLabel);
+    }
+    if (escortRetreatThresholdState) {
+      const retreatLabel = document.createElement('label');
+      retreatLabel.title = 'If pirates damage the escort past this threshold, the fleet returns early and mining stops. Pirates may still steal cargo.';
+      retreatLabel.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:8px;color:#8b949e;font-size:0.85rem;cursor:pointer';
+      retreatLabel.append(document.createTextNode('Withdraw escort by damage threshold'));
+      const retreatSelect = document.createElement('select');
+      retreatSelect.style.cssText = 'background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:3px 6px;border-radius:6px;font-size:0.85rem';
+      for (const [value, label] of [[null, 'Off'], [30, '30%'], [50, '50%'], [70, '70%']]) {
+        const option = document.createElement('option');
+        option.value = value == null ? '' : String(value);
+        option.textContent = label;
+        option.selected = value === escortRetreatThresholdState.threshold;
+        retreatSelect.append(option);
+      }
+      retreatSelect.addEventListener('change', () => {
+        const value = Number(retreatSelect.value);
+        escortRetreatThresholdState.threshold = [30, 50, 70].includes(value) ? value : null;
+      });
+      retreatLabel.append(retreatSelect);
+      box.append(retreatLabel);
+    }
     const done = (v) => { ov.remove(); resolve(v); };
     cancel.onclick = () => done(null);
     ok.onclick = () => done(effective());
     ov.onclick = (e) => { if (e.target === ov) done(null); };
     refresh();
     if (recShips.length) {
+      const miningOptions = document.createElement('div');
+      miningOptions.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;color:#8b949e;font-size:0.82rem;';
+      let autoOptimise = localStorage.getItem('nx-af-auto-optimise') === '1';
+      const autoOptimiseLabel = document.createElement('label');
+      autoOptimiseLabel.title = 'Automatically apply the mining recommendation when this dialog opens';
+      autoOptimiseLabel.style.cssText = 'display:inline-flex;align-items:center;gap:5px;cursor:pointer';
+      const autoOptimiseCheckbox = document.createElement('input');
+      autoOptimiseCheckbox.type = 'checkbox';
+      autoOptimiseCheckbox.checked = autoOptimise;
+      autoOptimiseCheckbox.addEventListener('change', () => {
+        autoOptimise = autoOptimiseCheckbox.checked;
+        localStorage.setItem('nx-af-auto-optimise', autoOptimise ? '1' : '0');
+        if (autoOptimise) optimiseMiningFleet();
+      });
+      autoOptimiseLabel.append(autoOptimiseCheckbox, document.createTextNode('Auto-optimise mining fleet'));
+      miningOptions.append(autoOptimiseLabel);
+      if (excavatorAvailable) {
+        const excavatorLabel = document.createElement('label');
+        excavatorLabel.title = 'Include one Excavator and reduce the recommended mining ships by 20%';
+        excavatorLabel.style.cssText = 'display:inline-flex;align-items:center;gap:5px;cursor:pointer';
+        const excavatorCheckbox = document.createElement('input');
+        excavatorCheckbox.type = 'checkbox';
+        excavatorCheckbox.checked = excavatorEnabled;
+        excavatorCheckbox.addEventListener('change', () => {
+          excavatorEnabled = excavatorCheckbox.checked;
+          localStorage.setItem('nx-af-excavator', excavatorEnabled ? '1' : '0');
+          if (autoOptimise) optimiseMiningFleet();
+        });
+        excavatorLabel.append(excavatorCheckbox, document.createTextNode('Excavator +20%'));
+        miningOptions.append(excavatorLabel);
+      }
+      box.append(miningOptions);
       const opt = document.createElement('button');
       opt.textContent = 'Optimise Mining Fleet';
       opt.title = 'Set the recommended count for mining ships only — escort/combat ships untouched';
       opt.style.cssText = 'padding:7px 16px;border-radius:6px;border:1px solid #1f6feb;background:#1f6feb;color:#fff;cursor:pointer;margin-right:auto';
-      opt.onclick = () => {
-        for (const id of miningShipIds || []) {
-          state.delete(id);
-          const inp = inputs.get(id);
-          if (inp) inp.value = '0';
-        }
-        for (const s of recShips) {
-          const q = Math.min(s.quantity, avail[s.shipDefId] || 0);
-          const inp = inputs.get(s.shipDefId);
-          if (q > 0) { state.set(s.shipDefId, q); if (inp) inp.value = String(q); }
-        }
-        refresh();
-      };
+      opt.onclick = optimiseMiningFleet;
       btns.append(opt);
+      if (autoOptimise) optimiseMiningFleet();
     }
     btns.append(cancel, ok);
     box.append(btns);
     ov.append(box);
     document.body.append(ov);
+    if (autoEscortTemplate && localStorage.getItem('nx-af-auto-escort') === '1') {
+      applyEscortTemplate(autoEscortTemplate, true);
+      refresh();
+    }
   });
 }
 
@@ -384,7 +585,7 @@ export function fmtCountdown(ms) {
 
 const MISSION_WORK_LABEL = { survey: 'Surveying', investigate: 'Investigating',
   collect_debris: 'Collecting', collect_salvage: 'Collecting', expedition: 'Exploring',
-  xeno_survey: 'Surveying ruins' };
+  xeno_survey: 'Surveying ruins', mine: 'Mining', raid: 'Raiding', patrol: 'Patrolling' };
 const MISSION_WORK_COLOR = {
   survey: '#3ec6ff', investigate: '#60a5fa', collect_debris: '#2dd4bf',
   collect_salvage: '#9b6cff', expedition: '#f0883e', xeno_survey: '#bc8cff',
@@ -969,6 +1170,12 @@ export function makeResourceDoughnut(canvasId, totals) {
 export const ZONE_COLORS = {
   sentinel: '#56d364', open: '#f0883e', dead: '#ff7b72', rift: '#d2a8ff', unknown: '#8b949e',
 };
+export const ZONE_DEFS = Object.freeze([
+  Object.freeze({ key: 'sentinel', label: 'Sentinel' }),
+  Object.freeze({ key: 'open', label: 'Open' }),
+  Object.freeze({ key: 'dead', label: 'Dead' }),
+  Object.freeze({ key: 'rift', label: 'Rift' }),
+]);
 export function zoneCell(zone) {
   const z = zone || 'unknown';
   const td = document.createElement('td');
