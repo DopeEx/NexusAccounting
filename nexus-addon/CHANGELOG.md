@@ -4,36 +4,52 @@ All notable changes to the Nexus Accounting Firefox addon.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## Unreleased
+## [1.9.0] - 2026-10-11
 
 ### Added
 - Pirate, expedition and wormhole reports now retain zone information from
   in-flight missions and galaxy-map sectors when their targets are gone.
 - Debris fields now use the security zone supplied by the game API, falling
   back to the system-name lookup when it is missing.
-- The Scouting tab refreshes debris fields from the live game API and keeps the
-  last-known fields when a live fetch fails.
-- Scouting automations now run from a central dashboard scheduler and do not
-  require the Scouting tab to remain selected.
 - The Galaxy Scout can now scan all arms at once as well as individual arms.
+- Asteroid field searches can target resource types across selected zones,
+  restore matching results from a 15-minute cache, and interpret “Nearest
+  systems” within the selected zones.
 - A **Yesterday** option in the View picker for the previous one-day window.
-- Salvage automation now supports minimum-resource and maximum-travel-time
-  filters with AND/OR matching, like debris collection.
+- Asteroid mining can continue until the mining hold is full or the field is
+  depleted, and escort fleets can withdraw at a selected damage threshold.
+- The API integration and game reference guides document the routes, payloads,
+  and game systems used by the add-on.
 
 ### Changed
 - **Quartermaster**: choose which transport ship types may be used for resource transfers and outpost collections; the selection is remembered.
+- The universe picker now uses the game's universe catalog, with data kept in
+  separate storage scopes for each universe.
 - **Fleet Templates** and the Asteroids fleet-template selector are now
-  available outside Expert Mode.
+  available directly from the dashboard and Asteroids tab.
+- The dashboard navigation, shared statistics controls, and report views have
+  been reorganized around a consistent layout.
 - **Combat simulator**: battle requests and results now use the game's official
   combat calculator, including its own ship data, research profile, losses,
   survivors, combat rounds, and debris.
 - The simulator POST runs through the logged-in game tab; a response without
   a combat report is treated as an error instead of rendering a false result.
+
 ### Removed
 - The locally estimated combat engine and its engine-only validation panel.
 
-### Added
-- **Multi-universe scraping**: the server picker now uses the game's universe catalog, and each open game universe is scraped into its own isolated storage scope.
+### Fixed
+- Newer tiered spy reports are normalized alongside legacy reports, and fleet
+  dispatch requests preserve hangar assignments.
+- Report totals now account correctly for existing data; the records cap can
+  be set to unlimited without exceeding the browser's storage quota.
+- Debris and report processing now preserves expiration and zone data when the
+  game response omits or relocates those fields.
+- Asteroid live search handles the game's API response variations.
+
+### Chore
+- Added API and game reference documentation and updated the privacy policy.
+- Release package filenames now use the add-on's fork-specific namespace.
 
 ## [1.8.0] - 2026-08-12
 

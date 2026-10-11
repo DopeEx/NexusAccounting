@@ -61,5 +61,7 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
-            --notes "See nexus-addon/CHANGELOG.md for details. Firefox via AMO, Chrome via the Web Store." \
+            --notes "This release brings a refreshed dashboard, improved asteroid and mining tools, expanded Quartermaster controls, multi-universe support, and the game's official combat simulator.
+
+Full technical details: [CHANGELOG.md](https://github.com/DopeEx/NexusAccounting/blob/$GITHUB_REF_NAME/nexus-addon/CHANGELOG.md)" \
             nexus-accounting-*.xpi nexus-accounting-*.zip
