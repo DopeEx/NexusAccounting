@@ -423,13 +423,11 @@ export function renderBattlesTab() {
   document.getElementById('b-stats-combat').append(...cards.children);
 
   // Debris salvaged, per resource.
-  const debrisLabel = document.createElement('div');
   const debrisCards = document.createElement('div'); debrisCards.className = 'stats';
   debrisCards.append(...resCards(debris, ' debris', false));
   document.getElementById('b-stats-debris').append(...debrisCards.children);
 
   // Raid pillage (resources stolen from raided camps), per resource.
-  const pillageLabel = document.createElement('div');
   const pillageCards = document.createElement('div'); pillageCards.className = 'stats';
   pillageCards.append(...resCards(pillage, ' pillage', false));
   document.getElementById('b-stats-pillage').append(...pillageCards.children);
@@ -440,7 +438,6 @@ export function renderBattlesTab() {
     totalNet >= 0 ? 'color:#56d364' : 'color:#ff7b72');
   netTotalCard.title = 'Weighted: ore×1, silicates×2, hydrogen×3, alloys×5, exotics×10.'
     + (fuel ? ` Includes ${fmt(fuel)} hydrogen fuel (est.).` : '');
-  const netLabel = document.createElement('div');
   const netCards = document.createElement('div'); netCards.className = 'stats';
   netCards.append(...resCards(net, ' net', true), netTotalCard);
   document.getElementById('b-stats-net').append(...netCards.children);
