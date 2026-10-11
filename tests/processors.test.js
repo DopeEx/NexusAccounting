@@ -53,6 +53,29 @@ test('damaged ships add 50% repair cost to losses', async () => {
   assert.equal(store.resources_lost.repair.ore, 100, 'rebuild keeps repair');
 });
 
+test('records_cap: 0 means unlimited, positive values are enforced', async () => {
+  const store = makeBrowserStub({ records_cap: 0 });
+  const bg = await loadBackground();
+
+  assert.equal(bg.resolveRecordsCap(0), Infinity, '0 must resolve to unlimited');
+  assert.equal(bg.resolveRecordsCap(100), 100, 'positive value must be kept');
+  assert.equal(bg.resolveRecordsCap(undefined), 5000, 'missing falls back to default');
+  assert.equal(bg.resolveRecordsCap(null), 5000, 'null falls back to default');
+
+  const recordCount = 5200;
+  const reports = Array.from({ length: recordCount }, (_, i) =>
+    surveyReport(i + 1, '2026-06-10'));
+  await bg.processSurveyReports(reports, SHIPS);
+  assert.equal(store.recent_reports.length, recordCount,
+    '0 must not truncate to the 5000 default cap');
+
+  const cappedStore = makeBrowserStub({ records_cap: 100 });
+  const cappedBg = await loadBackground();
+  await cappedBg.processSurveyReports(reports, SHIPS);
+  assert.equal(cappedStore.recent_reports.length, 100,
+    'positive cap must still limit stored reports');
+});
+
 test('security zone resolution', async () => {
   const bg = await loadBackground();
   assert.equal(bg.systemFromLocation('A12-27 / A12-27-AF1'), 'A12-27');

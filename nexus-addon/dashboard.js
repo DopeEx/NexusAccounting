@@ -434,9 +434,8 @@ document.getElementById('btn-save-cap').addEventListener('click', async function
   const input = document.getElementById('records-cap');
   const raw = parseInt(input.value.trim(), 10);
   if (isNaN(raw) || raw < 0) return;
-  const val = raw === 0 ? Infinity : raw;
-  await browser.storage.local.set({ records_cap: val });
-  input.value = val === Infinity ? 0 : val;
+  await browser.storage.local.set({ records_cap: raw });
+  input.value = raw;
   input.style.borderColor = '#30363d';
   input.style.color = '#e6edf3';
   document.getElementById('cap-warning').style.display = 'none';
@@ -550,7 +549,6 @@ document.getElementById('import-file').addEventListener('change', async function
 
     await browser.runtime.sendMessage({ type: 'BACKUP_NOW', reason: 'pre-import' });
     const data = payload.data;
-    if (data.records_cap === 0) data.records_cap = Infinity;
     if (globalThis.nexusStorage?.restoreFullStorage) {
       await globalThis.nexusStorage.restoreFullStorage(data);
     } else {
