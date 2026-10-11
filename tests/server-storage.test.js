@@ -57,6 +57,58 @@ test('server storage isolates NX-S0 from NX-NF', async () => {
   assert.equal((await globalThis.nexusStorage.get('foo')).foo, 'nf');
 });
 
+test('server storage accepts catalog universes without changing the selected universe during a scrape', async () => {
+  const store = makeBrowserStub();
+  await uniqueImport('../nexus-addon/server-storage.js');
+
+  await globalThis.nexusStorage.setUniverseCatalog([{ key: 'beta', name: 'Beta' }]);
+  assert.deepEqual(globalThis.nexusStorage.serverFromUrl('https://beta.nexuslegacy.space/'), {
+    key: 'beta',
+    id: 'BETA',
+    name: 'Beta',
+    hostname: 'beta.nexuslegacy.space',
+    origin: 'https://beta.nexuslegacy.space',
+  });
+
+  await globalThis.nexusStorage.setActiveServer('nf');
+  await globalThis.nexusStorage.withServer('beta', async () => {
+    await globalThis.browser.storage.local.set({ foo: 'beta' });
+  });
+  assert.equal(store['nexus_server:beta:foo'], 'beta');
+  assert.equal((await globalThis.nexusStorage.getActiveServer()).key, 'nf');
+  assert.equal(store.nexus_active_server, 'nf');
+});
+
+test('server operations serialize across universes while allowing nested storage scopes', async () => {
+  const store = makeBrowserStub();
+  await uniqueImport('../nexus-addon/server-storage.js');
+
+  let enterFirst;
+  let continueFirst;
+  const entered = new Promise(resolve => { enterFirst = resolve; });
+  const gate = new Promise(resolve => { continueFirst = resolve; });
+  const first = globalThis.nexusStorage.withServer('beta', async (_server, context) => {
+    enterFirst();
+    await gate;
+    await globalThis.nexusStorage.withServer('s0', async () => {
+      await globalThis.browser.storage.local.set({ nested: 's0' });
+    }, context);
+    await globalThis.browser.storage.local.set({ afterNested: 'beta' });
+  });
+
+  await entered;
+  const second = globalThis.nexusStorage.withServer('nf', async () => {
+    await globalThis.browser.storage.local.set({ next: 'nf' });
+  });
+  assert.equal(store['nexus_server:nf:next'], undefined);
+  continueFirst();
+  await Promise.all([first, second]);
+
+  assert.equal(store['nexus_server:s0:nested'], 's0');
+  assert.equal(store['nexus_server:beta:afterNested'], 'beta');
+  assert.equal(store['nexus_server:nf:next'], 'nf');
+});
+
 test('storage wrapper is active in normal extension pages', async () => {
   const store = makeBrowserStub();
   globalThis.location = { hostname: 'nf.nexuslegacy.space', href: 'https://nf.nexuslegacy.space/' };

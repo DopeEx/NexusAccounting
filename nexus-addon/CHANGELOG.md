@@ -12,9 +12,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   survivors, combat rounds, and debris.
 - The simulator POST runs through the logged-in game tab; a response without
   a combat report is treated as an error instead of rendering a false result.
-
 ### Removed
 - The locally estimated combat engine and its engine-only validation panel.
+
+### Added
+- **Multi-universe scraping**: the server picker now uses the game's universe catalog, and each open game universe is scraped into its own isolated storage scope.
 
 ## [1.8.0] - 2026-08-12
 

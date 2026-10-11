@@ -522,14 +522,16 @@ test('drift detection flags corruption; rebuild repairs and clears it', async ()
   assert.equal(store.stats_drift, undefined, 'rebuild clears the flag');
 });
 
-test('debris snapshot: live fields recorded with first-seen', async () => {
+test('debris snapshot: live fields and API expiry recorded with first-seen', async () => {
   const store = makeBrowserStub();
   const bg = await loadBackground();
 
-  await bg.processSystemDebris([{ id: 5, systemName: 'A1', ore: 1000, silicates: 500, alloys: 100 }], { A1: 'open' });
+  const expiresAt = '2026-06-10T12:00:00.000Z';
+  await bg.processSystemDebris([{ id: 5, systemName: 'A1', ore: 1000, silicates: 500, alloys: 100, expiresAt }], { A1: 'open' });
   const f = store.debris_fields[0];
   assert.equal(f.ore, 1000);
   assert.equal(f.zone, 'open');
+  assert.equal(f.expires, expiresAt);
   assert.ok(f.first_seen && f.updated_at);
 });
 

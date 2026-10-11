@@ -6,6 +6,58 @@
 let GAME_URL = 'https://s0.nexuslegacy.space';
 let GAME_ORIGIN = 'https://s0.nexuslegacy.space/';
 
+const UNIVERSE_FALLBACK = [
+  { key: 's0', name: 'S0' },
+  { key: 'nf', name: 'New Frontier' },
+];
+const UNIVERSE_CACHE_MAX_AGE = 6 * 60 * 60 * 1000;
+
+function normalizeUniverses(items) {
+  if (!Array.isArray(items)) return [];
+  const unique = new Map();
+  for (const item of items) {
+    if (typeof item?.key !== 'string' || !/^[a-z0-9-]{1,63}$/.test(item.key)) continue;
+    unique.set(item.key, {
+      key: item.key,
+      name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : item.key.toUpperCase(),
+    });
+  }
+  return [...unique.values()];
+}
+
+async function getUniverses({ refresh = false } = {}) {
+  const storage = globalThis.nexusStorage;
+  let cached;
+  let fetchedAt;
+  if (typeof storage?.getUniverseCatalog === 'function') {
+    cached = normalizeUniverses(await storage.getUniverseCatalog());
+    fetchedAt = await storage.getUniverseCatalogFetchedAt();
+  } else {
+    const state = await browser.storage.local.get(['universes', 'universes_fetched_at']);
+    cached = normalizeUniverses(state.universes);
+    fetchedAt = Number(state.universes_fetched_at) || 0;
+  }
+
+  if (!refresh && cached.length && Date.now() - fetchedAt < UNIVERSE_CACHE_MAX_AGE) {
+    return cached;
+  }
+
+  try {
+    const response = await fetch('https://nexuslegacy.space/api/universes');
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const universes = normalizeUniverses(await response.json());
+    if (!universes.length) throw new Error('The universe catalog was empty or invalid.');
+    if (typeof storage?.setUniverseCatalog === 'function') {
+      return await storage.setUniverseCatalog(universes);
+    }
+    await browser.storage.local.set({ universes, universes_fetched_at: Date.now() });
+    return universes;
+  } catch (error) {
+    console.warn('[NexusAccounting] Universe list fetch failed:', error.message);
+    return cached.length ? cached : UNIVERSE_FALLBACK;
+  }
+}
+
 async function syncGameServer() {
   try {
     const server = await globalThis.nexusStorage?.getActiveServer?.();
@@ -292,15 +344,10 @@ browser.action.onClicked.addListener(async () => {
   browser.tabs.create({ url: browser.runtime.getURL('dashboard.html') });
 });
 
-browser.runtime.onMessage.addListener(async msg => {
-  if (msg?.type === 'SCRAPE_NOW' && msg.serverKey && globalThis.nexusStorage?.withServer) {
-    return globalThis.nexusStorage.withServer(msg.serverKey, async () => {
-      await syncGameServer();
-      return scrape();
-    });
-  }
+const handleRuntimeMessage = async (msg, context = null) => {
+  if (msg?.type === 'GET_UNIVERSES') return getUniverses();
   await syncGameServer();
-  if (msg.type === 'SCRAPE_NOW') return scrape();
+  if (msg.type === 'SCRAPE_NOW') return scrape(context);
   if (msg.type === 'GET_FLEET') return getFleet(msg.planetId);
   if (msg.type === 'GET_SHIP_DEFS') return getShipDefs();
   if (msg.type === 'GET_PLANET_SHIPS') return getPlanetShips(msg.planetId);
@@ -374,22 +421,40 @@ browser.runtime.onMessage.addListener(async msg => {
   if (msg.type === 'GET_MARKET_ORDERS') return getOrders('/api/market/orders');
   if (msg.type === 'GET_MARKET_TRADES') return getMarketTrades();
   if (msg.type === 'GET_ALLIANCE_ORDERS') return getOrders('/api/alliance-trade/orders');
-  if (msg.type === 'START_RESEARCH') return startResearch(msg.researchId, msg.planetId, msg.useFragments);
+  if (msg.type === 'START_RESEARCH') return startResearch(msg.researchId, msg.planetId, msg.useFragments, context);
   if (msg.type === 'SET_LIVE_SEARCH') return setLiveSearch(msg.config);
   if (msg.type === 'STOP_LIVE_SEARCH') return stopLiveSearch();
+};
+
+browser.runtime.onMessage.addListener(async (msg, sender) => {
+  if (msg?.type === 'GET_UNIVERSES') return handleRuntimeMessage(msg);
+  const sourceServer = sender?.tab?.url
+    ? globalThis.nexusStorage?.serverFromUrl?.(sender.tab.url)
+    : null;
+  const selectedServer = sourceServer || await globalThis.nexusStorage?.getActiveServer?.();
+  const serverKey = msg?.type === 'SCRAPE_NOW' && msg.serverKey
+    ? msg.serverKey
+    : selectedServer?.key || 's0';
+  if (globalThis.nexusStorage?.withServer) {
+    return globalThis.nexusStorage.withServer(
+      serverKey,
+      (_server, context) => handleRuntimeMessage(msg, context),
+    );
+  }
+  return handleRuntimeMessage(msg);
 });
 
 // Launch a research on a planet: POST /api/research/{id}/start { planetId }.
 // (Endpoint mirrors the game client.) Refreshes stored state on success so the
 // dashboard reflects the new active research.
-async function startResearch(researchId, planetId, useFragments = false) {
+async function startResearch(researchId, planetId, useFragments = false, context = null) {
   if (researchId == null || planetId == null) return { error: 'Missing research or planet id.' };
   try {
     const body = { planetId };
     if (useFragments) body.useFragments = true;
     const r = await requestFromGameTab(`/api/research/${researchId}/start`, { method: 'POST', body });
     if (!r?.ok) return { error: `Start failed: ${r?.error || r?.status || 'unknown error'}` };
-    await scrape();   // pick up the new active research
+    await scrape(context);   // pick up the new active research
     return { ok: true, data: r.data || {} };
   } catch (e) {
     return { error: e.message };
@@ -2090,6 +2155,7 @@ async function processSystemDebris(debrisArr, zones = {}) {
       ore: d.ore || 0,
       silicates: d.silicates || 0,
       alloys: d.alloys || 0,
+      expires: d.expiresAt ?? null,
       first_seen: prev[id]?.first_seen || now,
       updated_at: now,
     };
@@ -2638,10 +2704,49 @@ async function ensureSchema() {
 
 // ── Full scrape (15-min alarm fallback + manual button) ────────────────────
 
-async function scrape() {
-  await ensureSchema();
+async function scrape(context = null) {
+  const listedUniverses = await getUniverses({ refresh: true });
+  // Authenticated API requests must go through a same-origin game tab.
+  const tabs = await browser.tabs.query({ url: '*://*.nexuslegacy.space/*' });
+  const openUniverses = new Map();
+  for (const tab of tabs) {
+    const server = tab?.url ? globalThis.nexusStorage?.serverFromUrl?.(tab.url) : null;
+    if (server) openUniverses.set(server.key, { key: server.key, name: server.name });
+  }
 
+  const ordered = new Map(listedUniverses.map(universe => [universe.key, universe]));
+  for (const universe of openUniverses.values()) {
+    if (!ordered.has(universe.key)) ordered.set(universe.key, universe);
+  }
+  const universesToScrape = [...ordered.keys()]
+    .filter(key => openUniverses.has(key))
+    .sort((a, b) => a.localeCompare(b));
+
+  if (!universesToScrape.length) {
+    const active = await globalThis.nexusStorage?.getActiveServer?.();
+    universesToScrape.push(active?.key || 's0');
+  }
+
+  const errors = [];
+  for (const universeKey of universesToScrape) {
+    const run = async () => {
+      await syncGameServer();
+      return scrapeCurrentUniverse();
+    };
+    const result = globalThis.nexusStorage?.withServer
+      ? await globalThis.nexusStorage.withServer(universeKey, run, context)
+      : await run();
+    if (!result?.ok) errors.push(`${universeKey}: ${result?.error || 'scrape failed'}`);
+  }
+
+  return errors.length
+    ? { ok: false, error: `Some universe scrapes failed: ${errors.join('; ')}` }
+    : { ok: true };
+}
+
+async function scrapeCurrentUniverse() {
   try {
+    await ensureSchema();
     const planetId = await getHomePlanetId();
     const [shipyardData, reportData, pirateData, spyData, campScoutData,
            miningData, expeditionData, wormholeData, xenoMessagesData, systemDebrisData, missionsData, researchData, pvpData, zones] = await Promise.all([
@@ -2721,19 +2826,19 @@ async function scrape() {
 // open a report in game.
 
 const WATCHED_URLS = [
-  `${GAME_URL}/api/fleet/survey-reports*`,
-  `${GAME_URL}/api/fleet/pirate-reports*`,
-  `${GAME_URL}/api/fleet/reports*`,   // PvP combat reports
-  `${GAME_URL}/api/fleet/spy-reports*`,
-  `${GAME_URL}/api/fleet/camp-scout-reports*`,
-  `${GAME_URL}/api/fleet/mining-reports*`,
-  `${GAME_URL}/api/fleet/expedition-reports*`,
-  `${GAME_URL}/api/fleet/wormhole-runs*`,
-  `${GAME_URL}/api/messages/system*`,
-  `${GAME_URL}/api/fleet/system-debris*`,
-  `${GAME_URL}/api/fleet/missions*`,
-  `${GAME_URL}/api/research*`,
-  `${GAME_URL}/api/planets/*/shipyard*`,
+  'https://*.nexuslegacy.space/api/fleet/survey-reports*',
+  'https://*.nexuslegacy.space/api/fleet/pirate-reports*',
+  'https://*.nexuslegacy.space/api/fleet/reports*',   // PvP combat reports
+  'https://*.nexuslegacy.space/api/fleet/spy-reports*',
+  'https://*.nexuslegacy.space/api/fleet/camp-scout-reports*',
+  'https://*.nexuslegacy.space/api/fleet/mining-reports*',
+  'https://*.nexuslegacy.space/api/fleet/expedition-reports*',
+  'https://*.nexuslegacy.space/api/fleet/wormhole-runs*',
+  'https://*.nexuslegacy.space/api/messages/system*',
+  'https://*.nexuslegacy.space/api/fleet/system-debris*',
+  'https://*.nexuslegacy.space/api/fleet/missions*',
+  'https://*.nexuslegacy.space/api/research*',
+  'https://*.nexuslegacy.space/api/planets/*/shipyard*',
 ];
 
 // Best-effort debounce so a burst of game calls to the same endpoint triggers
@@ -2745,27 +2850,39 @@ browser.webRequest.onCompleted.addListener(
   details => {
     if (details.tabId === -1) return;                       // our own re-fetches
     if (details.statusCode < 200 || details.statusCode >= 300) return;
-    const path = new URL(details.url).pathname;
-    if (refetchPending.has(path)) return;
-    refetchPending.add(path);
-    setTimeout(() => refetchPending.delete(path), 3000);
-    refetchEndpoint(path);
+    const url = new URL(details.url);
+    const server = globalThis.nexusStorage?.serverFromUrl?.(url.href);
+    if (!server) return;
+    const path = url.pathname;
+    const key = `${url.host}${path}`;
+    if (refetchPending.has(key)) return;
+    refetchPending.add(key);
+    setTimeout(() => refetchPending.delete(key), 3000);
+    void refetchEndpoint(path, server.key);
   },
   { urls: WATCHED_URLS }
 );
 
-async function refetchEndpoint(path) {
-  let json;
+async function refetchEndpoint(path, serverKey) {
   try {
-    json = await apiFetch(path);
-  } catch {
-    return;
+    const refresh = async () => {
+      await syncGameServer();
+      const json = await apiFetch(path);
+      const server = await globalThis.nexusStorage?.getActiveServer?.();
+      await routeIntercepted(`${server?.origin || GAME_URL}${path}`, json);
+    };
+    if (globalThis.nexusStorage?.withServer) {
+      await globalThis.nexusStorage.withServer(serverKey, refresh);
+    } else {
+      await refresh();
+    }
+  } catch (error) {
+    console.warn(`[NexusAccounting] Realtime refresh failed for ${serverKey}${path}:`, error.message);
   }
-  routeIntercepted(GAME_URL + path, json);
 }
 
 function routeIntercepted(url, json) {
-  enqueue(async () => {
+  return enqueue(async () => {
     if (url.includes('/shipyard')) {
       await browser.storage.local.set({ ships: buildShipCatalog(json) });
       return;
