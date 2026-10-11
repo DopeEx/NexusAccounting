@@ -23,6 +23,9 @@ const scJustInvestigated = new Set(); // same, for investigate missions
 let scTick = 0;
 let scMissions = [];
 let scLastRefreshAt = null;
+let scUiTimer = null;
+let scoutingAutomationReady = false;
+let scoutingInitPromise = null;
 const maxMissions = 1; // in-flight survey/investigate/collect fleets
 let scAutoScanRunning = false;
 let scAutoInvestigateRunning = false;
@@ -43,6 +46,11 @@ function disableAutomaticsOnHumanCheck() {
 
 export function resetScoutingTab() {
   inited = false;
+  scoutingAutomationReady = false;
+  if (scUiTimer !== null) {
+    clearInterval(scUiTimer);
+    scUiTimer = null;
+  }
   scPlanets = [];
   scSystems = {};
   scPending = [];
@@ -198,8 +206,21 @@ function renderTransit() {
   }
 }
 
-export async function initScoutingTab() {
-  if (inited) return;
+export function initScoutingTab() {
+  if (scoutingInitPromise) return scoutingInitPromise;
+  if (inited) return Promise.resolve(scoutingAutomationReady);
+  const pending = initializeScoutingTab().catch(error => {
+    inited = false;
+    scoutingAutomationReady = false;
+    throw error;
+  });
+  scoutingInitPromise = pending.finally(() => {
+    scoutingInitPromise = null;
+  });
+  return scoutingInitPromise;
+}
+
+async function initializeScoutingTab() {
   inited = true;
   const status = document.getElementById('sc-progress');
   setStatusText(status, 'Loading…');
@@ -208,7 +229,7 @@ export async function initScoutingTab() {
     browser.runtime.sendMessage({ type: 'GET_PLANETS' }),
     browser.runtime.sendMessage({ type: 'GET_GALAXY_MAP' }),
   ]);
-  if (map.error) { setStatusText(status, `Error: ${map.error}`); inited = false; return; }
+  if (map.error) { setStatusText(status, `Error: ${map.error}`); inited = false; return false; }
   for (const s of (map.systems || [])) {
     scSystems[s.id] = { x: s.x, y: s.y, name: s.name, zone: s.securityZone || null };
   }
@@ -272,6 +293,12 @@ export async function initScoutingTab() {
     input.value = savedSel[id] ?? 0;
     input.addEventListener('change', e => { rememberSelection(id, e.target.value); });
   }
+  const maxTravelSalvage = document.getElementById('sc-max-travel-salvage');
+  maxTravelSalvage.value = savedSel['sc-max-travel-salvage'] ?? 0;
+  maxTravelSalvage.addEventListener('change', e => { rememberSelection('sc-max-travel-salvage', e.target.value); });
+  const salvageFilterMode = document.getElementById('sc-salvage-filter-mode');
+  salvageFilterMode.value = savedSel['sc-salvage-filter-mode'] === 'or' ? 'or' : 'and';
+  salvageFilterMode.addEventListener('change', e => { rememberSelection('sc-salvage-filter-mode', e.target.value); });
   const maxTravelDebris = document.getElementById('sc-max-travel-debris');
   maxTravelDebris.value = savedSel['sc-max-travel-debris'] ?? 0;
   maxTravelDebris.addEventListener('change', e => { rememberSelection('sc-max-travel-debris', e.target.value); });
@@ -284,22 +311,34 @@ export async function initScoutingTab() {
   await loadCargoShips();
   updateAvail();
 
-  // Tick the countdowns every second; refetch the list every 30s. Both only
-  // while the tab is visible.
-  setInterval(() => {
+  // Update countdowns and visible fleet availability only while this tab is open.
+  scUiTimer = setInterval(() => {
     if (document.getElementById('scouting-content').style.display === 'none') return;
     tickTimers();
     for (const k in scTicks) for (const upd of scTicks[k]) upd();   // advance all progress bars
     if (++scTick % 10 === 0) updateAvail();       // catch returning fleets
-    if (scTick % 15 === 0 && document.getElementById('sc-investigate-auto')?.checked) automateInvestigate();
-    if (scTick % 15 === 0 && document.getElementById('sc-debris-auto')?.checked) automateDebris();
-    if (scTick % 15 === 0 && document.getElementById('sc-salvage-auto')?.checked) automateSalvage();
-    if (scTick % 15 === 0 && document.getElementById('sc-auto')?.checked) automateScouting();
-    if (scTick % 30 === 0) { void refreshScoutingData(); }   // refresh the list every 30s
   }, 1000);
 
   setStatusText(status, '');
-  refreshScoutingData();
+  await refreshScoutingData();
+  scoutingAutomationReady = true;
+  return true;
+}
+
+export async function runScoutingAutomations() {
+  if (!scoutingAutomationReady) return;
+
+  if (Date.now() - scLastRefreshAt >= 30_000) await refreshScoutingData();
+
+  const automations = [
+    ['sc-investigate-auto', automateInvestigate],
+    ['sc-debris-auto', automateDebris],
+    ['sc-salvage-auto', automateSalvage],
+    ['sc-auto', automateScouting],
+  ];
+  for (const [id, run] of automations) {
+    if (document.getElementById(id)?.checked) await run();
+  }
 }
 
 function setLastRefreshTimestamp() {
@@ -309,7 +348,7 @@ function setLastRefreshTimestamp() {
 }
 
 async function refreshScoutingData() {
-  await Promise.allSettled([loadActiveSurveys(), loadDebris()]);
+  await Promise.allSettled([loadActiveSurveys(), refreshDebris()]);
   scLastRefreshAt = Date.now();
   setLastRefreshTimestamp();
 }
@@ -470,8 +509,10 @@ async function automateInvestigate() {
 async function automateSalvage() {
   if (scAutoSalvageRunning) return;
   scAutoSalvageRunning = true;
-  let maxSalvCount = getMaxMissions('salvage'); // default max in-flight salvage fleets
+  const maxSalvCount = getMaxMissions('salvage');
   const minSalvageTotal = getMinResourceTotal('salvage');
+  const maxTravelTimeMinutes = getMaxTravelTimeMinutes('salvage');
+  const filterMode = document.getElementById('sc-salvage-filter-mode').value;
   try {
     const status = document.getElementById('sc-salvage-status');
     const [mi, res] = await Promise.all([
@@ -506,35 +547,38 @@ async function automateSalvage() {
         for (const k of SALVAGE_KEYS_LOCAL) { const v = loot[k] || 0; if (v) total += v; }
         return { reportId: r.id, systemId: r.systemId, system: r.systemName || `#${r.systemId}`, zone: r.securityZone || null, total, expires: r.salvageExpiresAt || null, res: loot };
       })
-      .filter(s => s.total >= minSalvageTotal && s.total > 0
+      .filter(s => s.total > 0
         && (!s.expires || new Date(s.expires) > now) && s.systemId != null && !inflight.has(s.systemId))
       .sort((a, b) => b.total - a.total);
 
     if (!pending.length) { setStatusText(status, 'No uncollected salvage to collect.'); return; }
 
-    // avoid sending two fleets to the same salvage: re-check missions a few times with short delays
+    // Re-check missions before each candidate in case another client has already
+    // dispatched a fleet to collect it.
     const sleep = ms => new Promise(res => setTimeout(res, ms));
-    let chosen = pending[0];
-    for (let attempt = 0; attempt < 3; attempt++) {
-      // refresh missions to see if someone else took this salvage
-      const mi2 = await browser.runtime.sendMessage({ type: 'GET_MISSIONS' });
-      if (mi2 && !mi2.error) {
-        const inflight2 = new Set((mi2.missions || [])
-          .filter(m => m.missionType === 'collect_salvage' && m.targetSystemId != null)
-          .map(m => m.targetSystemId));
-        for (const id of scJustSalvaged) inflight2.add(id);
-        if (inflight2.has(chosen.systemId)) {
-          // chosen target already taken, pick next available
-          chosen = pending.find(p => !inflight2.has(p.systemId));
-          if (!chosen) { setStatusText(status, 'No uncollected salvage to collect (targets taken).'); return; }
+    for (const salvage of pending) {
+      let targetAvailable = false;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const latest = await browser.runtime.sendMessage({ type: 'GET_MISSIONS' });
+        if (latest.error) { setStatusText(status, `Error: ${latest.error}`); return; }
+        const targetTaken = (latest.missions || []).some(m =>
+          m.missionType === 'collect_salvage' && m.targetSystemId === salvage.systemId,
+        ) || scJustSalvaged.has(salvage.reportId);
+        if (!targetTaken) {
+          targetAvailable = true;
+          break;
         }
+        if (attempt < 2) await sleep(1000);
       }
-      // if last attempt or chosen not taken, break
-      if (attempt === 2 || !(await (() => false)())) break; // no-op to allow loop to check attempts
-      await sleep(1000);
+      if (!targetAvailable) continue;
+      const result = await collectSalvage(salvage, true, {
+        minTotal: minSalvageTotal,
+        maxTravelTimeMinutes,
+        mode: filterMode,
+      });
+      if (result === 'sent' || result === 'error') return;
     }
-
-    await collectSalvage(chosen);
+    setStatusText(status, 'No uncollected salvage matches the automatic collection filters.');
   } finally {
     scAutoSalvageRunning = false;
   }
@@ -591,8 +635,8 @@ async function automateDebris() {
   }
 }
 
-function getMaxTravelTimeMinutes() {
-  const el = document.getElementById('sc-max-travel-debris');
+function getMaxTravelTimeMinutes(type = 'debris') {
+  const el = document.getElementById(`sc-max-travel-${type}`);
   const value = el ? Number(el.value) : NaN;
   return Number.isInteger(value) && value >= 0 ? value : 0;
 }
@@ -1326,6 +1370,22 @@ async function loadDebris() {
   renderDebris();
 }
 
+async function refreshDebris() {
+  try {
+    const result = await browser.runtime.sendMessage({ type: 'REFRESH_DEBRIS' });
+    if (result?.error) {
+      console.warn('[NexusAccounting] Live debris refresh failed; using saved fields:', result.error);
+      setStatusText(document.getElementById('sc-debris-status'),
+        `Live refresh failed: ${result.error}. Showing saved fields.`, 'warning');
+    }
+  } catch (error) {
+    console.warn('[NexusAccounting] Live debris refresh failed; using saved fields:', error);
+    setStatusText(document.getElementById('sc-debris-status'),
+      `Live refresh failed: ${error.message}. Showing saved fields.`, 'warning');
+  }
+  await loadDebris();
+}
+
 function renderDebris() {
   const list = document.getElementById('sc-debris-list');
   list.textContent = '';
@@ -1428,7 +1488,7 @@ function renderDebris() {
     const estimate = cachedFuelDisplay(estimateKey);
     const plannedShips = planFleet(f.total || 0, cargo);
     const plannedNames = plannedShips.map(s => `${s.quantity}× ${nameOf(s.shipDefId)}`);
-    const plannedShipCount = plannedShips.map(s => shipShortName(nameOf(s.shipDefId)));
+    const plannedShipCount = plannedShips.map(s => `${s.quantity}× ${shipShortName(nameOf(s.shipDefId))}`);
     if (f.expires) card.dataset.expires = f.expires;
     const hidden = scHiddenDebris.has(f.id);
     if (hidden) card.style.opacity = '0.45';
@@ -1708,7 +1768,7 @@ function renderSalvage() {
     const estimate = cachedFuelDisplay(estimateKey);
     const plannedShips = planFleet(s.total || 0, cargo);
     const plannedNames = plannedShips.map(ship => `${ship.quantity}× ${nameOf(ship.shipDefId)}`);
-    const plannedShipCount = plannedShips.map(ship => shipShortName(nameOf(ship.shipDefId)));
+    const plannedShipCount = plannedShips.map(ship => `${ship.quantity}× ${shipShortName(nameOf(ship.shipDefId))}`);
     if (s.expires) card.dataset.expires = s.expires;
 
     const action = document.createElement('div');
@@ -1821,19 +1881,43 @@ async function computeSalvageFuel() {
   }
 }
 
-async function collectSalvage(salvage) {
-  const status = document.getElementById('sc-progress');
+async function collectSalvage(salvage, automated = false, filters = {}) {
+  const status = document.getElementById(automated ? 'sc-salvage-status' : 'sc-progress');
   const planetId = Number(document.getElementById('sc-planet').value);
 
   const cargo = selectedCargo();
   const plan = planFleet(salvage.total, cargo);
-  if (!plan.length) { setStatusText(status, 'Select cargo ships above first.'); return; }
+  if (!plan.length) { setStatusText(status, 'Select cargo ships above first.'); return automated ? 'error' : undefined; }
 
   // Cap to what the source planet has; warn if that can't carry it all.
   const av = await browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId });
-  if (av.error) { setStatusText(status, `Error: ${av.error}`); return; }
+  if (av.error) { setStatusText(status, `Error: ${av.error}`); return automated ? 'error' : undefined; }
   const { ships } = capShipsToAvailable(plan, av.available);
-  if (!ships.length) { setStatusText(status, 'None of the selected cargo ships are on this planet.'); return; }
+  if (!ships.length) {
+    if (!automated) setStatusText(status, 'None of the selected cargo ships are on this planet.');
+    return automated ? 'skip' : undefined;
+  }
+
+  if (automated) {
+    const minActive = filters.minTotal > 0;
+    const timeActive = filters.maxTravelTimeMinutes > 0;
+    const minMatches = !minActive || salvage.total >= filters.minTotal;
+    const needsTravelEstimate = timeActive && (filters.mode === 'and' || !minMatches);
+    let timeMatches = !timeActive;
+    if (needsTravelEstimate) {
+      const est = await fuelEstimate(planetId, salvage.systemId, ships, 'collect_salvage');
+      if (est.error || !Number.isFinite(est.travelTime)) {
+        const reason = est.error || 'Travel time estimate is unavailable.';
+        setStatusText(status, `Cannot verify travel time to ${salvage.system}: ${reason}`);
+        return 'error';
+      }
+      timeMatches = est.inRange !== false && est.travelTime <= filters.maxTravelTimeMinutes * 60;
+    }
+    const matches = minActive && timeActive
+      ? filters.mode === 'or' ? minMatches || timeMatches : minMatches && timeMatches
+      : minActive ? minMatches : timeActive ? timeMatches : true;
+    if (!matches) return 'skip';
+  }
 
   setStatusText(status, `Collecting salvage at ${salvage.system}…`);
   const res = await browser.runtime.sendMessage({
@@ -1844,9 +1928,9 @@ async function collectSalvage(salvage) {
     // If humation is required, show the status message in red
     if (String(res.error).includes('Human verification')) {
       disableAutomaticsOnHumanCheck();
-      setStatusText(status, msg, 'error'); return;
+      setStatusText(status, msg, 'error'); return automated ? 'error' : undefined;
     }
-    setStatusText(status, msg, 'warning'); return;
+    setStatusText(status, msg, 'warning'); return automated ? 'error' : undefined;
   }
   scJustSalvaged.add(salvage.reportId);
   setStatusText(status, `Fleet sent to ${salvage.system} ✓`);
@@ -1855,4 +1939,5 @@ async function collectSalvage(salvage) {
   // Pull the new mission in so the progress bar shows promptly (retry for lag).
   loadActiveSurveys();
   setTimeout(loadActiveSurveys, 2000);
+  return automated ? 'sent' : undefined;
 }
