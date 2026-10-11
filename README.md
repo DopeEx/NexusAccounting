@@ -15,15 +15,23 @@ Firefox addon that tracks survey mission data from [Nexus Legacy](https://s0.nex
 
 ## How it works
 
-The addon reads your `nexus_token` JWT directly from the browser cookies, no credentials to enter. You just need to be logged in to Nexus Legacy.
+The addon sends requests through your logged-in game tab, and the browser attaches the game's HttpOnly session cookie. No credentials need to be entered.
 
-All data is stored locally in `browser.storage.local`. Nothing is sent anywhere.
+Game data is stored locally in `browser.storage.local`. The add-on communicates
+directly with the game API; it does not upload data to a server operated by the
+add-on author.
 
 ## Usage
 
 1. Log in to [Nexus Legacy](https://s0.nexuslegacy.space)
 2. Click the Nexus Accounting toolbar icon to open the dashboard
 3. Click **Scrape Now** to fetch data immediately, or wait for the automatic 15-minute scrape
+
+## Documentation
+
+- [API integration reference](docs/api-reference.md): API routes used by the add-on, request handling, and observed response shapes.
+- [Game reference](docs/game-reference.md): game systems and reference data.
+- [Privacy policy](docs/privacy-policy.md): data access, storage, and API actions.
 
 ## Dashboard
 
