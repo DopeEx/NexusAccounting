@@ -352,6 +352,7 @@ const handleRuntimeMessage = async (msg, context = null) => {
   if (msg.type === 'GET_SHIP_DEFS') return getShipDefs();
   if (msg.type === 'GET_PLANET_SHIPS') return getPlanetShips(msg.planetId);
   if (msg.type === 'GET_MISSIONS') return apiGet('/api/fleet/missions');
+  if (msg.type === 'REFRESH_DEBRIS') return refreshDebris();
   if (msg.type === 'GET_FUEL_ESTIMATE') {
     // POST: routed through the game tab (same-origin) — a Bearer POST from the
     // extension carries an Origin header the server 500s on.
@@ -1123,10 +1124,11 @@ function addShipCost(detail, ships, into, factor) {
 
 const ZONE_REFRESH_MS = 24 * 3600 * 1000;
 
-async function getSystemZones() {
-  const { system_zones, system_zones_at, system_coords_by_id } =
-    await browser.storage.local.get(['system_zones', 'system_zones_at', 'system_coords_by_id']);
-  if (system_zones && system_zones_at && system_coords_by_id && Date.now() - system_zones_at < ZONE_REFRESH_MS) {
+export async function getSystemZones() {
+  const { system_zones, system_zones_at, system_coords_by_id, sector_zones } =
+    await browser.storage.local.get(['system_zones', 'system_zones_at', 'system_coords_by_id', 'sector_zones']);
+  if (system_zones && system_zones_at && system_coords_by_id && sector_zones
+      && Date.now() - system_zones_at < ZONE_REFRESH_MS) {
     return system_zones;
   }
   try {
@@ -1135,10 +1137,12 @@ async function getSystemZones() {
     const byId = {};       // systemId → zone
     const coordsById = {}; // systemId → {x, y}  (AU — galaxy map units = AU, verified 2026-06-22)
     const coordsByName = {};
+    const sectorZones = {}; // sectorId → zone
     for (const s of (data.systems || [])) {
       if (s.securityZone) {
         if (s.name) map[s.name] = s.securityZone;
         if (s.id != null) byId[s.id] = s.securityZone;
+        if (s.sectorId != null) sectorZones[s.sectorId] = s.securityZone;
       }
       if (s.id != null && s.x != null) {
         coordsById[s.id] = { x: s.x, y: s.y, name: s.name || null };
@@ -1148,6 +1152,7 @@ async function getSystemZones() {
     await browser.storage.local.set({
       system_zones: map, system_zone_by_id: byId, system_zones_at: Date.now(),
       system_coords_by_id: coordsById, system_coords_by_name: coordsByName,
+      sector_zones: sectorZones,
     });
     return map;
   } catch {
@@ -1443,8 +1448,9 @@ async function processSurveyReports(reports, ships, zones = {}) {
 async function processPirateReports(pirateReports, ships, campZones = {}) {
   const pstored = await browser.storage.local.get([
     'pirate_seen_ids', 'pirate_totals', 'pirate_daily', 'pirate_resources_lost',
-    'pirate_outcomes', 'pirate_debris_total', 'pirate_recent_reports', 'records_cap',
+    'pirate_outcomes', 'pirate_debris_total', 'pirate_recent_reports', 'records_cap', 'mission_zones',
   ]);
+  const missionZones = pstored.mission_zones || {};
   const recordsCap = resolveRecordsCap(pstored.records_cap);
 
   const pirateSeen = new Set(pstored.pirate_seen_ids || []);
@@ -1531,7 +1537,7 @@ async function processPirateReports(pirateReports, ships, campZones = {}) {
       id: r.id,
       created_at: r.createdAt,
       camp_id: r.campId,
-      zone: r.securityZone || campZones[r.campId] || 'unknown',
+      zone: r.securityZone || campZones[r.campId] || missionZones[r.missionId] || 'unknown',
       outcome,
       ore, hydrogen, silicates, ...extrasOf(loot),
       ships_lost: nDestroyed,
@@ -1963,8 +1969,10 @@ async function processExpeditionReports(reports, runs, ships, zones = {}, wormho
 
   const stored = await browser.storage.local.get([
     'exp_seen_ids', 'exp_totals', 'expedition_totals', 'wormhole_totals', 'exp_daily', 'exp_recent_reports',
-    'expedition_resources_lost', 'wormhole_resources_lost', 'records_cap',
+    'expedition_resources_lost', 'wormhole_resources_lost', 'records_cap', 'mission_zones', 'sector_zones',
   ]);
+  const missionZones = stored.mission_zones || {};
+  const sectorZones = stored.sector_zones || {};
   const recordsCap = resolveRecordsCap(stored.records_cap);
 
   const emptyTotals = () => ({ ore: 0, silicates: 0, hydrogen: 0, alloys: 0, rare: {}, missions: 0, ships_lost: 0 });
@@ -2017,8 +2025,9 @@ async function processExpeditionReports(reports, runs, ships, zones = {}, wormho
       wclass: r.wormholeClass || wormholeClasses[r.wormholeId] || null,
       event: r.eventType || r.outcome || r.result || r.status || null,
       location: r.systemName || r.locationName || r.targetName ||
-        (r.wormholeId != null ? `Wormhole #${r.wormholeId}` : '—'),
-      zone: wormholeZones[r.wormholeId] || resolveZone(r.systemName || systemFromLocation(r.locationName), zones),
+        (r.wormholeId != null ? `Wormhole #${r.wormholeId}` : r.sectorId != null ? `Sector #${r.sectorId}` : '—'),
+      zone: wormholeZones[r.wormholeId] || sectorZones[r.sectorId] || missionZones[r.missionId]
+        || resolveZone(r.systemName || systemFromLocation(r.locationName), zones),
       loot,
       ships_lost: nLost,
       ships_destroyed_raw: destroyedArr,
@@ -2151,7 +2160,7 @@ async function processSystemDebris(debrisArr, zones = {}) {
       debrisId: d.id ?? null,         // numeric id for collect-debris
       systemId: d.systemId ?? null,   // for the fuel estimate
       system: d.systemName || d.locationName || (d.systemId != null ? `System #${d.systemId}` : 'unknown'),
-      zone: resolveZone(d.systemName, zones),
+      zone: d.securityZone || resolveZone(d.systemName, zones),
       ore: d.ore || 0,
       silicates: d.silicates || 0,
       alloys: d.alloys || 0,
@@ -2167,6 +2176,14 @@ async function processSystemDebris(debrisArr, zones = {}) {
   });
 }
 
+async function refreshDebris() {
+  const json = await apiGet(SYSTEM_DEBRIS_PATH);
+  if (json.error) return json;
+  const { system_zones } = await browser.storage.local.get('system_zones');
+  await enqueue(() => processSystemDebris(json.debris || [], system_zones || {}));
+  return { ok: true };
+}
+
 // Active fleet missions → precise debris collection. A returning
 // `collect_debris` fleet's cargo is exactly what it salvaged, so we record
 // each such mission once (deduped by mission id) as a real collection, plus
@@ -2176,8 +2193,18 @@ async function processMissions(missions, zoneById = {}, ships = {}) {
   // missions — a scout then a heavy collection fleet — so per-report joins
   // miss the second; counting per mission catches every trip).
   if (missions && missions.length) {
-    const { fuel_log, fuel_counted_ids } =
-      await browser.storage.local.get(['fuel_log', 'fuel_counted_ids']);
+    const { fuel_log, fuel_counted_ids, mission_zones, sector_zones } =
+      await browser.storage.local.get(['fuel_log', 'fuel_counted_ids', 'mission_zones', 'sector_zones']);
+    const missionZoneMap = { ...(mission_zones || {}) };
+    for (const mission of missions) {
+      const zone = zoneById[mission.targetSystemId] || (sector_zones || {})[mission.targetSectorId];
+      if (mission.id != null && zone) missionZoneMap[mission.id] = zone;
+    }
+    const missionZoneIds = Object.keys(missionZoneMap);
+    for (const id of missionZoneIds.slice(0, Math.max(0, missionZoneIds.length - 3000))) {
+      delete missionZoneMap[id];
+    }
+    await browser.storage.local.set({ mission_zones: missionZoneMap });
     const counted = new Set(fuel_counted_ids || []);
     const flog = [...(fuel_log || [])];
     for (const m of missions) {
@@ -2759,7 +2786,7 @@ async function scrapeCurrentUniverse() {
       apiFetch(EXPEDITION_PATH).catch(() => ({ reports: [] })),
       apiFetch(WORMHOLE_PATH).catch(() => ({ runs: [] })),
       apiFetch(`${XENO_MESSAGES_PATH}?page=1`).catch(() => ({ notifications: [] })),
-      apiFetch(SYSTEM_DEBRIS_PATH).catch(() => ({ debris: [] })),
+      apiFetch(SYSTEM_DEBRIS_PATH).catch(() => null),
       apiFetch(MISSIONS_PATH).catch(() => ({ missions: [] })),
       apiFetch(RESEARCH_PATH).catch(() => ({ research: [] })),
       apiFetch(PVP_PATH).catch(() => ({ reports: [] })),
@@ -2784,13 +2811,13 @@ async function scrapeCurrentUniverse() {
         ships = (await browser.storage.local.get('ships')).ships || {};
       }
       await backfillZones(zones, campZones, wormholeZones);
+      await processMissions(missionsData.missions || [], zoneById || {}, ships);
       const nSurveys = await processSurveyReports(reportData.reports || [], ships, zones);
       const nPirates = await processPirateReports(pirateData.reports || [], ships, campZones);
       const nMining = await processMiningReports(miningData.reports || [], ships, zones);
       await processExpeditionReports(expeditionData.reports || [], wormholeData.runs || [], ships, zones, wormholeZones, wormholeClasses || {});
       await processXenoReports(xenoMessagesData.notifications || []);
-      await processSystemDebris(systemDebrisData.debris || [], zones);
-      await processMissions(missionsData.missions || [], zoneById || {}, ships);
+      if (systemDebrisData) await processSystemDebris(systemDebrisData.debris || [], zones);
       await browser.storage.local.set({
         research: researchData.research || [],
         research_speed_mult: researchData.researchSpeedMult || 1,

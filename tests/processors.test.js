@@ -355,6 +355,18 @@ test('debris collection: returning collect_debris cargo recorded once', async ()
   assert.equal(store.debris_collected.ore, 480);
 });
 
+test('active missions retain their resolved zone for later reports', async () => {
+  const store = makeBrowserStub({ sector_zones: { 22: 'dead' } });
+  const bg = await loadBackground();
+
+  await bg.processMissions([
+    { id: 120, missionType: 'expedition', targetSectorId: 22 },
+    { id: 121, missionType: 'survey', targetSystemId: 44 },
+  ], { 44: 'rift' });
+
+  assert.deepEqual(store.mission_zones, { 120: 'dead', 121: 'rift' });
+});
+
 test('debris collection: mid-tick cargo not committed until collectionComplete', async () => {
   const store = makeBrowserStub({});
   const bg = await loadBackground();
@@ -405,17 +417,19 @@ test('zone back-fill stamps existing records once', async () => {
 });
 
 test('pirate zone resolved from campId via camp→zone map', async () => {
-  const store = makeBrowserStub({ ships: {} });
+  const store = makeBrowserStub({ ships: {}, mission_zones: { 3: 'rift' } });
   const bg = await loadBackground();
   const raid = (id, campId) => ({
     id, createdAt: '2026-06-13T10:00:00Z', campId,
+    missionId: id === 3 ? 3 : undefined,
     attackerFleet: [], pirateFleet: [], attackerLosses: [], pirateLosses: [],
     loot: { ore: 5 }, debris: {}, outcome: 'attacker_won',
   });
-  await bg.processPirateReports([raid(1, 1448), raid(2, 9999)], {}, { 1448: 'open' });
+  await bg.processPirateReports([raid(1, 1448), raid(2, 9999), raid(3, 9998)], {}, { 1448: 'open' });
   const byId = Object.fromEntries(store.pirate_recent_reports.map(r => [r.id, r.zone]));
   assert.equal(byId[1], 'open', 'known camp resolves');
   assert.equal(byId[2], 'unknown', 'unknown camp falls back');
+  assert.equal(byId[3], 'rift', 'remembered mission zone resolves after the camp disappears');
 });
 
 test('wormhole zone from wormholeId, back-fill from location string', async () => {
@@ -436,6 +450,50 @@ test('wormhole zone from wormholeId, back-fill from location string', async () =
   const bg2 = await loadBackground();
   await bg2.backfillZones({}, {}, { 65656: 'dead' });
   assert.equal(s2.exp_recent_reports[0].zone, 'dead');
+});
+
+test('expedition and wormhole zones fall back to sector and remembered mission zones', async () => {
+  const store = makeBrowserStub({
+    sector_zones: { 8: 'sentinel' },
+    mission_zones: { 90: 'rift', 91: 'dead' },
+  });
+  const bg = await loadBackground();
+  await bg.processExpeditionReports([
+    { id: 1, missionId: 90, sectorId: 9, createdAt: '2026-06-14T10:00:00Z', status: 'completed', totalLoot: {}, totalShipsLost: [] },
+    { id: 2, sectorId: 8, createdAt: '2026-06-14T11:00:00Z', status: 'completed', totalLoot: {}, totalShipsLost: [] },
+  ], [{
+    id: 3, missionId: 91, createdAt: '2026-06-14T12:00:00Z', status: 'completed',
+    totalLoot: {}, totalShipsLost: [],
+  }], {}, {}, {}, {});
+
+  const byId = Object.fromEntries(store.exp_recent_reports.map(report => [report.id, report]));
+  assert.equal(byId['exp-1'].zone, 'rift');
+  assert.equal(byId['exp-1'].location, 'Sector #9');
+  assert.equal(byId['exp-2'].zone, 'sentinel');
+  assert.equal(byId['exp-2'].location, 'Sector #8');
+  assert.equal(byId['wh-3'].zone, 'dead');
+});
+
+test('system zone cache includes sector zones from the galaxy map', async () => {
+  const store = makeBrowserStub();
+  globalThis.browser.alarms.get = async () => null;
+  globalThis.browser.tabs.query = async () => [{ id: 42, url: 'https://s0.nexuslegacy.space/' }];
+  globalThis.browser.tabs.sendMessage = async (_tabId, message) => {
+    assert.equal(message.path, '/api/galaxy/map');
+    return {
+      ok: true,
+      data: { systems: [
+        { id: 1, name: 'A1', sectorId: 11, securityZone: 'open', x: 1, y: 2 },
+        { id: 2, name: 'B1', sectorId: 11, securityZone: 'open', x: 3, y: 4 },
+        { id: 3, name: 'C1', sectorId: 12, securityZone: 'rift', x: 5, y: 6 },
+      ] },
+    };
+  };
+  const bg = await loadBackground();
+
+  await bg.getSystemZones();
+
+  assert.deepEqual(store.sector_zones, { 11: 'open', 12: 'rift' });
 });
 
 test('wormhole runs: totalLoot parsed, in-progress runs skipped', async () => {
@@ -533,6 +591,19 @@ test('debris snapshot: live fields and API expiry recorded with first-seen', asy
   assert.equal(f.zone, 'open');
   assert.equal(f.expires, expiresAt);
   assert.ok(f.first_seen && f.updated_at);
+});
+
+test('debris snapshot prefers the API security zone and falls back to system lookup', async () => {
+  const store = makeBrowserStub();
+  const bg = await loadBackground();
+
+  await bg.processSystemDebris([
+    { id: 6, systemName: 'A1', securityZone: 'rift' },
+    { id: 7, systemName: 'A1' },
+    { id: 8, securityZone: '' },
+  ], { A1: 'open' });
+
+  assert.deepEqual(store.debris_fields.map(field => field.zone), ['rift', 'open', 'unknown']);
 });
 
 test('live search fieldMatches: type/zone/mult/qty/left filters + null handling', async () => {
