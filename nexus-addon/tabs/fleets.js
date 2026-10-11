@@ -2,7 +2,7 @@
 // collecting gas, future jobs). A template is planet-agnostic — ship quantities
 // keyed by shipDefId. Stored under `fleet_templates`.
 
-import { setStatusText } from '../common.js';
+import { setStatusText, ZONE_COLORS, ZONE_DEFS } from '../common.js';
 
 let inited = false;
 let templates = [];          // [{ id, name, ships: { shipDefId: qty } }]
@@ -23,7 +23,6 @@ const MINING_SHIPS = {
   excavator:     { name: 'Excavator',     color: '#e3b341', mines: '+20% fleet mining yield (all)' },
   freighter:     { name: 'Freighter',     color: '#8b949e', mines: 'Ore, Cryo-Ice (basic)' },
 };
-
 function statText(s) {
   return `ATK ${s.attack} · HP ${s.hp} · SH ${s.shieldHp}` +
     (s.weaponType ? ` · ${s.weaponType}` : '') +
@@ -137,6 +136,7 @@ function fillEditor() {
   document.getElementById('ft-delete').disabled = !t;
   document.getElementById('ft-box-title').textContent = t ? (t.name || 'Fleet') : 'Fleet';
   fillShips();
+  fillEscortZones();
 }
 
 // Ship rows for the open template, grouped + styled like the simulator's
@@ -180,9 +180,10 @@ function fillShips() {
     const input = document.createElement('input');
     input.type = 'number';
     input.min = '0';
-    input.value = t.ships[s.shipDefId] || '';
+    input.step = '0.5';
+    input.value = t.ships[s.shipDefId] != null ? String(t.ships[s.shipDefId]) : '';
     input.addEventListener('input', () => {
-      const v = parseInt(input.value, 10) || 0;
+      const v = parseFloat(input.value) || 0;
       if (v > 0) t.ships[s.shipDefId] = v; else delete t.ships[s.shipDefId];
       save();
     });
@@ -191,4 +192,50 @@ function fillShips() {
     tr.append(tdName, tdStats, tdInput);
     tbody.appendChild(tr);
   }
+}
+
+function fillEscortZones() {
+  const box = document.getElementById('ft-escort-zones');
+  box.textContent = '';
+  const t = current();
+  if (!t) return;
+
+  const escortZones = t.escortZones || [];
+  for (const zone of ZONE_DEFS) {
+    const active = escortZones.includes(zone.key);
+    const color = ZONE_COLORS[zone.key];
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = zone.label;
+    button.className = 'fleet-escort-zone';
+    button.style.borderColor = color;
+    button.style.background = active ? color : 'transparent';
+    button.style.color = active ? '#1b2030' : color;
+    button.title = `Tag this template as an escort fleet for ${zone.label} zone`;
+    button.addEventListener('click', () => {
+      t.escortZones = active
+        ? escortZones.filter(key => key !== zone.key)
+        : [...escortZones, zone.key];
+      save();
+      fillEscortZones();
+    });
+    box.append(button);
+  }
+
+  const separator = document.createElement('span');
+  separator.className = 'fleet-escort-separator';
+  box.append(separator);
+
+  const label = document.createElement('label');
+  label.className = 'fleet-escort-ratio';
+  label.title = 'Treat ship quantities as ratios per mining ship.';
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.checked = !!t.escortPerMiner;
+  checkbox.addEventListener('change', () => {
+    t.escortPerMiner = checkbox.checked;
+    save();
+  });
+  label.append(checkbox, document.createTextNode('Per mining ship'));
+  box.append(label);
 }

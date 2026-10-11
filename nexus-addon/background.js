@@ -306,9 +306,14 @@ browser.runtime.onMessage.addListener(async msg => {
   if (msg.type === 'GET_SURVEY_COOLDOWNS') return apiGet('/api/fleet/survey-cooldowns');
   if (msg.type === 'GET_SURVEY_REPORTS') return apiGet('/api/fleet/survey-reports');
   if (msg.type === 'SEND_MINE') {
+    const escortRetreatThreshold = [30, 50, 70].includes(msg.escortRetreatThreshold)
+      ? msg.escortRetreatThreshold
+      : null;
     return gamePost('/api/fleet/mine', {
       sourcePlanetId: msg.sourcePlanetId, targetFieldId: msg.targetFieldId,
       ships: msg.ships, miningDuration: msg.miningDuration,
+      mineUntilFull: !!msg.mineUntilFull,
+      ...(escortRetreatThreshold != null ? { escortRetreatThreshold } : {}),
     });
   }
   if (msg.type === 'SEND_SURVEY') {

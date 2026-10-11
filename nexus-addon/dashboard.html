@@ -751,9 +751,6 @@
       <label>Fleet template
         <select id="af-template-select"></select>
       </label>
-      <label class="asteroids-checkbox-field" title="Include an Excavator: +20% fleet extraction capacity in the ship recommendation">
-        <input id="af-excavator" type="checkbox" />Excavator +20%
-      </label>
       <span class="asteroids-template-note">🚀 on a row opens the fleet editor seeded from the ship recommendation. Edit templates in the Fleets tab.</span>
     </div>
 
@@ -780,6 +777,7 @@
             <th class="sortable" data-key="remaining" title="Remaining / total resources">Content</th>
             <th class="sortable" data-key="leftPct" title="Percentage of resources still present">Left %</th>
             <th class="sortable" data-key="zone">Zone</th>
+            <th class="sortable" data-key="fieldId">Field ID</th>
             <th class="sortable" data-key="ownerName" title="Owner of the Outpost built on this field, if any">Outpost</th>
             <th class="sortable" data-key="distance">Distance</th>
             <th title="Hydrogen to send the selected template here">Fuel Cost</th>
@@ -1020,6 +1018,10 @@
       <span id="ft-status" class="fleet-status"></span>
       <div id="ft-legend" class="fleet-legend"></div>
       <table class="fleet-table"><tbody id="ft-ships"></tbody></table>
+      <div class="fleet-escort-config">
+        <div class="fleet-escort-label">Escort for zone:</div>
+        <div id="ft-escort-zones" class="fleet-escort-zones"></div>
+      </div>
     </div>
   </div>
 

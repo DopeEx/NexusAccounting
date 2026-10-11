@@ -7,14 +7,13 @@
 // All routed through the game tab (same-origin) like the asteroid mine call.
 
 import { loadFleetTemplates } from './fleets.js';
-import { applySort, attachSortable, confirmDialog, fmtCountdown, fuelEstimate, missionProgress, rememberSelection, rememberedSelections, setStatusMessage, store, setStatusText, ZONE_COLORS } from '../common.js';
+import { applySort, attachSortable, confirmDialog, fmtCountdown, fuelEstimate, missionProgress, rememberSelection, rememberedSelections, setStatusMessage, store, setStatusText, ZONE_COLORS, ZONE_DEFS } from '../common.js';
 
 let inited = false;
 let scPlanets = [];          // [{ id, name, systemId, systemName }]
 let scSystems = {};          // systemId → { x, y, name, zone }
 let scTemplates = [];
 
-const ZONES = ['sentinel', 'open', 'dead', 'rift'];
 const scZoneFilter = new Set();   // empty = any zone
 let scPending = [];               // anomalies awaiting investigation
 let scReturning = [];             // investigated systems whose fleet is still homebound
@@ -578,7 +577,7 @@ async function templateShips(templateId, planetId) {
 function drawToggles(boxId, filter, redraw, onChange) {
   const box = document.getElementById(boxId);
   box.textContent = '';
-  for (const z of ZONES) {
+  for (const { key: z } of ZONE_DEFS) {
     const b = document.createElement('button');
     const on = filter.has(z);
     b.type = 'button';
