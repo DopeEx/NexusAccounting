@@ -122,6 +122,11 @@ export async function initFinderTab() {
     o.textContent = a.name;
     sel.appendChild(o);
   }
+  const allArmsOption = document.createElement('option');
+  allArmsOption.value = 'all';
+  allArmsOption.textContent = 'All arms';
+  sel.appendChild(allArmsOption);
+  updateSectorInput();
 
   // Zone filter from the distinct security zones present on the map.
   const zsel = document.getElementById('f-zone');
@@ -151,7 +156,11 @@ export function systemDistance(s) {
 // Sector field accepts a single sector ("35") or a range ("33-35").
 // Empty means the whole arm.
 export function regionSectorIds() {
-  const armId = parseInt(document.getElementById('f-arm').value, 10) || 1;
+  const armValue = document.getElementById('f-arm').value;
+  if (armValue === 'all') {
+    return { armId: null, from: 1, to: Infinity, min: -Infinity, max: Infinity };
+  }
+  const armId = parseInt(armValue, 10) || 1;
   const arm = finderArms.find(a => a.id === armId) || { sectorCount: 50 };
   const raw = document.getElementById('f-sector').value.trim();
   let from = 1, to = arm.sectorCount;
@@ -165,6 +174,14 @@ export function regionSectorIds() {
   to = Math.max(1, Math.min(arm.sectorCount, to));
   const base = (armId - 1) * 50;
   return { armId, from, to, min: base + from, max: base + to };
+}
+
+function updateSectorInput() {
+  const allArms = document.getElementById('f-arm').value === 'all';
+  const sector = document.getElementById('f-sector');
+  if (allArms) sector.value = '';
+  sector.disabled = allArms;
+  sector.title = allArms ? 'Disabled when scanning all arms.' : '';
 }
 
 export const MAP_PAD = 14;
@@ -199,7 +216,8 @@ export function drawGalaxyMap() {
   const sy = y => mapBaseY(canvas, y) * mapView.scale + mapView.oy;
 
   const region = regionSectorIds();
-  const inRegion = s => s.armId === region.armId && s.sectorId >= region.min && s.sectorId <= region.max;
+  const inRegion = s => region.armId == null ||
+    (s.armId === region.armId && s.sectorId >= region.min && s.sectorId <= region.max);
 
   ctx.textAlign = 'center';
   ctx.font = '10px system-ui, sans-serif';
@@ -346,11 +364,11 @@ document.getElementById('f-search').addEventListener('click', async function () 
   // Searchable systems: ones you've explored, plus any present in the (possibly
   // imported) scan cache — so shared knowledge covers systems you haven't seen.
   const candidates = galaxySystems.filter(s =>
-    s.armId === region.armId && s.sectorId >= region.min && s.sectorId <= region.max &&
+    (region.armId == null || (s.armId === region.armId && s.sectorId >= region.min && s.sectorId <= region.max)) &&
     (s.visibility === 'full' || s.visibility === 'partial' || cachedIds.has(s.id)) &&
     (!wantZone || s.securityZone === wantZone));
   const fogged = galaxySystems.filter(s =>
-    s.armId === region.armId && s.sectorId >= region.min && s.sectorId <= region.max).length - candidates.length;
+    region.armId == null || (s.armId === region.armId && s.sectorId >= region.min && s.sectorId <= region.max)).length - candidates.length;
 
   const status = document.getElementById('f-progress');
   if (!candidates.length) {
@@ -397,7 +415,7 @@ document.getElementById('f-search').addEventListener('click', async function () 
         finderHits.push({
           systemId: s.id,
           planet: p.name, system: s.name || `#${s.id}`,
-          sector: s.sectorId - (region.armId - 1) * 50,
+          sector: s.sectorId - (s.armId - 1) * 50,
           type: p.planetType, size: p.size, temp: p.temperature,
           moons: nMoons, moonList: moonList(p, moons), zone: s.securityZone || '—', distance: dist,
           owner: p.ownerName || null,
@@ -583,7 +601,8 @@ document.getElementById('f-map').addEventListener('wheel', e => {
 }, { passive: false });
 
 ['f-arm', 'f-sector'].forEach(id => {
-  document.getElementById(id).addEventListener('input', () => {
+  document.getElementById(id).addEventListener(id === 'f-arm' ? 'change' : 'input', () => {
+    if (id === 'f-arm') updateSectorInput();
     if (galaxySystems) drawGalaxyMap();
   });
 });

@@ -12,10 +12,11 @@ import { renderExpeditionStatsTab, renderExpeditionsTab, setExpPage } from './ta
 import { renderWormholesTab, setWhPage } from './tabs/wormholes.js';
 import { initAsteroidsTab } from './tabs/asteroids.js';
 import { renderFleetsTab } from './tabs/fleets.js';
-import { initScoutingTab } from './tabs/scouting.js';
+import { initScoutingTab, runScoutingAutomations } from './tabs/scouting.js';
 import { initXenoTab, renderXenoStatsTab, setXnReportPage } from './tabs/xeno.js';
 import { initFinderTab } from './tabs/finder.js';
 import { initMarketTab } from './tabs/market.js';
+import { registerAutomationTask, startAutomationScheduler } from './automation-scheduler.js';
 import { renderGlobalTab } from './tabs/global.js';
 import { renderMiningTab, setMiningPage } from './tabs/mining.js';
 import { renderPiratesTab, setPirateCurrentPage } from './tabs/pirates.js';
@@ -247,7 +248,7 @@ export const TAB_CONTENT = {
 };
 
 const EXPERT_MODE_KEY = 'expert_mode_enabled';
-const EXPERT_TABS = new Set(['scouting', 'fleets', 'expeditions', 'xeno']);
+const EXPERT_TABS = new Set(['scouting', 'expeditions', 'xeno']);
 const HIDE_GLOBAL_CONTROLS_TABS = new Set([
   'finder', 'asteroids', 'fleets', 'scouting', 'techtree', 'market', 'simulator', 'xeno',
 ]);
@@ -417,7 +418,8 @@ export function onViewChange() {
 }
 
 // Switching View fills the Days picker: All time clears it (= all history),
-// Daily/Hourly = today, Last N = a trailing range. The user can still edit it.
+// Daily/Hourly = today, Yesterday = the previous day, Last N = a trailing range.
+// The user can still edit it.
 document.getElementById('mode-select').addEventListener('change', () => {
   const mode = getMode();
   const from = document.getElementById('window-from');
@@ -426,7 +428,7 @@ document.getElementById('mode-select').addEventListener('change', () => {
   if (mode === 'all') {
     from.value = ''; to.value = '';
   } else {
-    const now = Date.now();
+    const now = Date.now() - (mode === 'yesterday' ? 86400000 : 0);
     to.value = dayKey(now);
     from.value = dayKey(now - ((span || 1) - 1) * 86400000);
   }
@@ -619,10 +621,18 @@ async function maybeWarnStorage() {
 }
 
 positionControls();
+registerAutomationTask('scouting', () => {
+  if (expertModeEnabled) return runScoutingAutomations();
+});
 initExpertModeToggle()
   .then(() => loadAll())
   .then(() => {
     openHashTab();
+    startAutomationScheduler();
+    // Load scouting data once so its automations do not depend on the visible tab.
+    void initScoutingTab().catch(error => {
+      console.error('[NexusAccounting] Could not initialize scouting automations:', error);
+    });
     return maybeWarnStorage();
   });
 maybeShowWhatsNew();

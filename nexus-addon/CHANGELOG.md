@@ -6,7 +6,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+- Pirate, expedition and wormhole reports now retain zone information from
+  in-flight missions and galaxy-map sectors when their targets are gone.
+- Debris fields now use the security zone supplied by the game API, falling
+  back to the system-name lookup when it is missing.
+- The Scouting tab refreshes debris fields from the live game API and keeps the
+  last-known fields when a live fetch fails.
+- Scouting automations now run from a central dashboard scheduler and do not
+  require the Scouting tab to remain selected.
+- The Galaxy Scout can now scan all arms at once as well as individual arms.
+- A **Yesterday** option in the View picker for the previous one-day window.
+- Salvage automation now supports minimum-resource and maximum-travel-time
+  filters with AND/OR matching, like debris collection.
+
 ### Changed
+- **Fleet Templates** and the Asteroids fleet-template selector are now
+  available outside Expert Mode.
 - **Combat simulator**: battle requests and results now use the game's official
   combat calculator, including its own ship data, research profile, losses,
   survivors, combat rounds, and debris.
