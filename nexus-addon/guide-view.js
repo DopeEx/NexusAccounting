@@ -16,7 +16,7 @@ const DASH_URL = ext.runtime.getURL('dashboard.html');
 const SECTIONS = [
   ['Getting started', [
     ['Nexus Tracker', 'The main dashboard: opens in a new tab from the sidebar. Aggregates every report over time into charts, stat cards and sortable tables.'],
-    ['In-game tools', 'Empire View, User Guide, Ratio Calculator and Live Search Belts open from the Addon section of the sidebar; the Quartermaster opens from the 📦 button in the top bar. All render as overlays/panels on the game page itself.'],
+    ['In-game tools', 'Empire View, User Guide and Live Search Belts open from the Addon section of the sidebar; the Quartermaster opens from the 📦 button in the top bar. All render as overlays/panels on the game page itself.'],
     ['Data', 'The addon scrapes the game APIs every 15 minutes (and on demand). Everything is stored locally in your browser; nothing is sent anywhere. Auto-backups are written to Downloads before each update.'],
   ]],
   ['Dashboard tabs', [
@@ -45,11 +45,10 @@ const SECTIONS = [
   ]],
   ['Quartermaster (📦 top bar)', [
     ['Overview', 'Total ships stationed across all colonies plus an "In flight" total (ships on active missions), and a card per planet/outpost with its resources and ships.'],
-    ['Move by drag & drop', 'Drag a resource or ship from a colony onto another to stage a transfer in the docked builder card at the top: adjust amounts and the transport ships (auto-planned by effective cargo capacity), see fuel + ETA, then Send.'],
+    ['Move by drag & drop', 'Drag a resource or ship from a colony onto another to stage a transfer in the docked builder card at the top: adjust amounts, choose which transport types may be auto-planned (selection is remembered), see fuel + ETA, then Send.'],
     ['What each drop does', 'Planet→planet: deliver resources / transfer (relocate) ships. Planet→outpost: supply resources / deploy ships. Drag an outpost resource onto a planet to collect it (choose source planet + resource types). Nothing sends until you press Send.'],
   ]],
   ['Other sidebar tools', [
-    ['Ratio Calculator', 'A floating calculator: enter any two of offer / pay / ratio and it infers the third.'],
     ['Live Search Belts', 'Start/stop the background asteroid live-search and view its latest matches, with per-row fuel and a one-click mine.'],
   ]],
   ['Good to know', [
