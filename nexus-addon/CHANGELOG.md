@@ -4,6 +4,14 @@ All notable changes to the Nexus Accounting Firefox addon.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.1] - 2026-10-11
+
+### Fixed
+- Sending a mining fleet no longer fails with "Invalid request body": the
+  escort withdraw threshold is now sent in the format the game expects.
+- The Asteroids results now mark only the belt a fleet is mining instead of
+  every belt in that system.
+
 ## [1.9.0] - 2026-10-11
 
 ### Added
@@ -46,8 +54,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Debris and report processing now preserves expiration and zone data when the
   game response omits or relocates those fields.
 - Asteroid live search handles the game's API response variations.
-- Sending a mining fleet no longer fails with "Invalid request body": the
-  escort withdraw threshold is now sent as a fraction (0.5) as the game expects.
 
 ### Chore
 - Added API and game reference documentation and updated the privacy policy.
