@@ -92,4 +92,20 @@
 .win-defender { color: #79c0ff; }
 .win-draw { color: #e3b341; }
 
+.sim-fleet-results {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0;
+}
+.sim-fleet-card, .sim-round-card {
+  background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px;
+}
+.sim-fleet-card h3 { margin-bottom: 8px; font-size: 0.9rem; }
+.sim-fleet-card-row, .sim-round-card {
+  color: #c9d1d9; font-size: 0.8rem; line-height: 1.5;
+}
+.sim-rounds-heading { margin: 16px 0 8px; font-size: 1rem; }
+.sim-rounds-heading span { color: #8b949e; }
+.sim-rounds-list, .sim-loss-rows { display: grid; gap: 6px; }
+.sim-loss-rows { margin-bottom: 16px; color: #c9d1d9; font-size: 0.8rem; }
+
 @media (max-width: 900px) { .sim-layout { grid-template-columns: 1fr; } }
+@media (max-width: 600px) { .sim-fleet-results { grid-template-columns: 1fr; } }

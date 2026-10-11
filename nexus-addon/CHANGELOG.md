@@ -4,6 +4,18 @@ All notable changes to the Nexus Accounting Firefox addon.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Changed
+- **Combat simulator**: battle requests and results now use the game's official
+  combat calculator, including its own ship data, research profile, losses,
+  survivors, combat rounds, and debris.
+- The simulator POST runs through the logged-in game tab; a response without
+  a combat report is treated as an error instead of rendering a false result.
+
+### Removed
+- The locally estimated combat engine and its engine-only validation panel.
+
 ## [1.8.0] - 2026-08-12
 
 ### Added

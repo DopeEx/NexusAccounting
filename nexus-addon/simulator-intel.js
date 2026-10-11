@@ -1,8 +1,7 @@
 // Simulator: fleet import and intel auto-fill (spy + camp scout reports).
 
 import { setStatusText } from './common.js';
-import { shipDefs } from './engine.js';
-import { fmt, updateFleetStats } from './simulator.js';   // circular: both are functions, only called from handlers
+import { fmt, shipDefs, shipIdByKey } from './simulator.js';
 
 // ── System coordinates & distance ──────────────────────────────────────────
 
@@ -107,30 +106,6 @@ document.getElementById('btn-load-fleet').addEventListener('click', async functi
   }
 });
 
-// ── Fill tech levels from stored research ──────────────────────────────────
-
-async function fillTechLevels(side) {
-  const status = document.getElementById('sim-status');
-  const { research } = await browser.storage.local.get('research');
-  if (!research?.length) {
-    setStatusText(status, 'No research data — open the game and click Scrape Now first.');
-    return;
-  }
-  const levels = {};
-  for (const t of research) levels[t.key] = t.level || 0;
-  let filled = 0;
-  document.querySelectorAll(`input[data-tech-side="${side}"]`).forEach(input => {
-    const lvl = levels[input.dataset.tech] || 0;
-    input.value = lvl;
-    if (lvl > 0) filled++;
-  });
-  updateFleetStats(side);
-  setStatusText(status, `Filled ${filled} research levels into ${side} tech.`);
-}
-
-document.getElementById('btn-fill-tech-attacker').addEventListener('click', () => fillTechLevels('attacker'));
-document.getElementById('btn-fill-tech-defender').addEventListener('click', () => fillTechLevels('defender'));
-
 // ── Intel reports (spy + camp scout) → defender auto-fill ──────────────────
 
 // Map intel building list → defender defense levels. Substring-matches the
@@ -188,18 +163,18 @@ document.getElementById('report-select').addEventListener('change', async functi
   const r = intelReports.find(x => x.id === this.value);
   if (!r) return;
 
-  document.querySelectorAll('input[data-side="defender"][data-key]').forEach(input => {
-    const item = r.fleet.find(f => f.key === input.dataset.key);
-    input.value = item ? item.quantity : 0;
+  const defenderType = document.getElementById('defender-type');
+  defenderType.value = this.value.startsWith('camp-') ? 'pirate' : 'player';
+  defenderType.dispatchEvent(new Event('change'));
+  const quantities = new Map((r.fleet || []).map(item => [shipIdByKey(item.key), item.quantity || 0]));
+  document.querySelectorAll('input[data-side="defender"][data-ship-id]').forEach(input => {
+    input.value = quantities.get(Number(input.dataset.shipId)) || 0;
   });
 
   const defLevels = classifyDefenses(r.buildings);
-  document.getElementById('def-missile').value = defLevels.missile_defense;
-  document.getElementById('def-laser').value   = defLevels.laser_defense;
-  document.getElementById('def-railgun').value = defLevels.railgun_defense;
-  document.getElementById('def-plasma').value  = defLevels.plasma_defense;
-  document.getElementById('def-ion').value     = defLevels.ion_defense;
-  document.getElementById('def-ew').value      = defLevels.ew_system;
+  document.querySelectorAll('input[data-def-key]').forEach(input => {
+    input.value = defLevels[input.dataset.defKey] || 0;
+  });
 
   renderTargetIntel(r);
   const total = r.fleet.reduce((s, f) => s + f.quantity, 0);
