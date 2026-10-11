@@ -89,11 +89,6 @@ checked 500 systems. Requests remain sequential and use the normal scan delay.
 
 <img width="1901" height="883" alt="nexus_accounting_graph_bar" src="https://github.com/user-attachments/assets/723bf0e3-8251-4fe3-bc6b-57f1bb54629f" />
 
-
-## Disclaimer
-
-Web UI made with Claude Opus 4.8
-
 ## License
 
 [Mozilla Public License](https://www.mozilla.org/en-US/MPL/2.0/)
