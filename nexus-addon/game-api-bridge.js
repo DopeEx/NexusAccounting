@@ -38,9 +38,16 @@
       }
 
       let data = {};
-      try { data = JSON.parse(text); } catch { /* empty/non-JSON response */ }
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch (error) {
+          sendResponse({ error: `Failed to parse API response: ${error.message}`, parseError: true, ...meta });
+          return;
+        }
+      }
       sendResponse({ ok: true, data, ...meta });
-    }).catch(error => sendResponse({ error: error.message }));
+    }).catch(error => sendResponse({ error: error.message, networkError: true }));
 
     return true;
   }
