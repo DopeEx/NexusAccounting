@@ -87,7 +87,8 @@ async function cargoContext() {
       else if (e.type === 'shuttle_cargo_bonus') shuttle += (e.value || 0) * lvl;
     }
   }
-  _cargoCtx = { general, shuttle, commander: (me.user && me.user.activeLeaderBonuses && me.user.activeLeaderBonuses.cargoBonus) || 0 };
+  _cargoCtx = { general, shuttle, race: (me.user && me.user.race) || '',
+    commander: (me.user && me.user.activeLeaderBonuses && me.user.activeLeaderBonuses.cargoBonus) || 0 };
   return _cargoCtx;
 }
 function effCap(def, ctx) {
@@ -506,15 +507,91 @@ function stageTransfer(item, target) {
 // Dedicated cargo haulers (not combat/mining ships). tanker/ore_freighter also
 // restrict which resources they carry (definition.allowedCargo).
 const CARGO_KEYS = new Set(['freighter', 'transport_shuttle', 'bulk_carrier', 'ore_freighter', 'tanker']);
+const CARGO_SELECTION_KEY = 'lv_cargo_sel';
+const cargoSel = new Set(CARGO_KEYS);
+let cargoSelLoaded = false;
+let cargoSelLoadError = null;
+async function loadCargoSel() {
+  if (cargoSelLoaded) return;
+  cargoSelLoaded = true;
+  try {
+    const stored = await ext.storage.local.get(CARGO_SELECTION_KEY);
+    const selection = stored[CARGO_SELECTION_KEY];
+    if (Array.isArray(selection)) {
+      cargoSel.clear();
+      for (const key of selection) if (CARGO_KEYS.has(key)) cargoSel.add(key);
+    }
+  } catch (error) {
+    cargoSelLoadError = error;
+    console.error('[NexusAccounting] Could not load Quartermaster transport selection.', error);
+  }
+}
 // Cargo haulers on a colony (effective capacity). If `wantKeys` (snake cargo
 // keys being moved) is given, exclude haulers that can't carry all of them.
 async function cargoShipsOf(colony, wantKeys) {
   const ctx = await cargoContext();
+  await loadCargoSel();
   return ((colony && colony.ships) || []).map(f => {
     const def = f.definition || {};
-    return { shipDefId: f.shipDefId, key: def.key, name: def.name || ('#' + f.shipDefId), cap: effCap(def, ctx), avail: (f.quantity || 0) - (f.damagedQuantity || 0), allowed: def.allowedCargo || null };
+    return { shipDefId: f.shipDefId, key: def.key, name: def.name || ('#' + f.shipDefId), cap: effCap(def, ctx), avail: (f.quantity || 0) - (f.damagedQuantity || 0), allowed: def.allowedCargo || null,
+      imageUrl: (ctx.race && def.key) ? `/api/images/ships/${ctx.race}/${def.key}.webp` : null };
   }).filter(s => CARGO_KEYS.has(s.key) && s.cap > 0 && s.avail > 0 &&
     (!wantKeys || !wantKeys.length || !s.allowed || wantKeys.some(k => s.allowed.includes(k))));
+}
+
+function cargoPicker(haulers, onChange, status) {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex; flex-wrap:wrap; gap:6px; margin:2px 0 8px;';
+  for (const h of haulers) {
+    const on = cargoSel.has(h.key);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.title = `${h.name} — ${fmt(h.cap)} cargo each${on ? '' : ' (not used)'}`;
+    btn.setAttribute('aria-pressed', String(on));
+    btn.style.cssText = `padding:2px; border-radius:6px; cursor:pointer; line-height:0; opacity:${on ? '1' : '0.45'};` +
+      `border:2px solid ${on ? '#2ea043' : '#30363d'}; background:${on ? '#193b22' : 'transparent'};`;
+    if (h.imageUrl) {
+      const img = document.createElement('img');
+      img.src = h.imageUrl;
+      img.alt = h.name;
+      img.style.cssText = 'width:28px; height:28px; object-fit:contain;';
+      img.onerror = () => {
+        btn.textContent = h.name;
+        btn.style.lineHeight = '';
+        btn.style.padding = '3px 8px';
+        btn.style.color = '#e6edf3';
+      };
+      btn.appendChild(img);
+    } else {
+      btn.textContent = h.name;
+      btn.style.lineHeight = '';
+      btn.style.padding = '3px 8px';
+      btn.style.color = '#e6edf3';
+    }
+    btn.onclick = async () => {
+      for (const pickerButton of wrap.querySelectorAll('button')) pickerButton.disabled = true;
+      const next = new Set(cargoSel);
+      if (on) next.delete(h.key);
+      else next.add(h.key);
+      try {
+        await ext.storage.local.set({ [CARGO_SELECTION_KEY]: [...next] });
+      } catch (error) {
+        console.error('[NexusAccounting] Could not save Quartermaster transport selection.', error);
+        setStatusText(status, 'Could not save transport selection.', 'error');
+        for (const pickerButton of wrap.querySelectorAll('button')) pickerButton.disabled = false;
+        return;
+      }
+      cargoSel.clear();
+      for (const key of next) cargoSel.add(key);
+      cargoSelLoadError = null;
+      onChange();
+    };
+    wrap.appendChild(btn);
+  }
+  if (cargoSelLoadError) {
+    setStatusText(status, 'Could not load saved transport selection; all eligible transports are enabled.', 'error');
+  }
+  return wrap;
 }
 
 // Collect: a resource dragged from an outpost onto a planet. The planet is the
@@ -626,7 +703,8 @@ async function renderBuilder() {
     box.appendChild(typeWrap);
     // Transport ships from the source planet (only haulers that can carry the
     // selected resource types).
-    const cargoShips = await cargoShipsOf(srcPlanet, [...b.filter].map(k => RES_BY_K[k].cargo));
+    const allHaulers = await cargoShipsOf(srcPlanet, [...b.filter].map(k => RES_BY_K[k].cargo));
+    const cargoShips = allHaulers.filter(s => cargoSel.has(s.key));
     const availableOf = () => [...b.filter].reduce((s, k) => s + ((b.outpost.res && b.outpost.res[k]) || 0), 0);
     const availAll = () => Object.fromEntries([...b.filter].map(k => [RES_BY_K[k].cargo, (b.outpost.res && b.outpost.res[k]) || 0]));
     // Amounts to plan for: full availability, or capped to the target (largest first).
@@ -649,6 +727,7 @@ async function renderBuilder() {
     box.appendChild(fieldRow('<span style="color:#9aa4b2;">Target amount (auto-plan ships)</span>', withStepper(targetInp, availableOf())));
     const cw = document.createElement('div'); cw.style.cssText = 'border-top:1px solid #21262d; margin-top:6px; padding-top:8px;';
     cw.innerHTML = '<div style="color:#8b949e; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px;">Transport ships</div>';
+    cw.appendChild(cargoPicker(allHaulers, () => { b.cargoManual = {}; renderBuilder(); }, status));
     box.appendChild(cw);
     const capLine = document.createElement('div'); capLine.style.cssText = 'font-size:0.82rem; margin-top:4px;';
     const updateSend = () => {
@@ -667,7 +746,12 @@ async function renderBuilder() {
       inp.addEventListener('input', () => { b.cargoManual[cs.shipDefId] = Math.min(cs.avail, Math.max(0, parseInt(inp.value, 10) || 0)); updateSend(); });
       cw.appendChild(fieldRow(`${esc(cs.name)} <span style="color:#6e7681;">/ ${fmt(cs.avail)} · ${fmt(cs.cap)} ea</span>`, withStepper(inp, cs.avail)));
     }
-    if (!cargoShips.length) cw.innerHTML += '<span style="color:#ff7b72; font-size:0.82rem;">No cargo ships on this planet.</span>';
+    if (!cargoShips.length) {
+      const warn = document.createElement('span');
+      warn.style.cssText = 'color:#ff7b72; font-size:0.82rem;';
+      warn.textContent = allHaulers.length ? 'No transport type selected.' : 'No cargo ships on this planet.';
+      cw.appendChild(warn);
+    }
     cw.appendChild(capLine);
     getShips = () => cargoShips.map(cs => ({ shipDefId: cs.shipDefId, quantity: b.cargoManual[cs.shipDefId] || 0 })).filter(s => s.quantity > 0);
     fuelSrc = b.srcPlanetId; fuelSys = b.outpost.systemId;
@@ -722,9 +806,11 @@ async function renderBuilder() {
       box.appendChild(fieldRow(`<img src="${IMG}/${r.icon}" width="15" height="15" style="width:15px;height:15px;"> ${r.label} <span style="color:#6e7681;">/ ${fmt(ent.max)}</span>`,
         withStepper(inp, ent.max), () => { delete b.res[k]; b.cargoManual = null; if (!Object.keys(b.res).length) builder = null; renderBuilder(); }));
     }
-    const cargoShips = await cargoShipsOf(b.src, Object.keys(b.res).map(k => RES_BY_K[k].cargo));
+    const allHaulers = await cargoShipsOf(b.src, Object.keys(b.res).map(k => RES_BY_K[k].cargo));
+    const cargoShips = allHaulers.filter(s => cargoSel.has(s.key));
     const cw = document.createElement('div'); cw.style.cssText = 'border-top:1px solid #21262d; margin-top:10px; padding-top:8px;';
     cw.innerHTML = '<div style="color:#8b949e; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px;">Transport ships</div>';
+    cw.appendChild(cargoPicker(allHaulers, () => { b.cargoManual = null; renderBuilder(); }, status));
     box.appendChild(cw);
     const capLine = document.createElement('div'); capLine.style.cssText = 'font-size:0.82rem; margin-top:4px;';
     const amountsOf = () => Object.fromEntries(Object.entries(b.res).map(([k, e]) => [RES_BY_K[k].cargo, e.amount]));
@@ -744,7 +830,12 @@ async function renderBuilder() {
       inp.addEventListener('input', () => { b.cargoManual[cs.shipDefId] = Math.min(cs.avail, Math.max(0, parseInt(inp.value, 10) || 0)); refreshCargo(); });
       cw.appendChild(fieldRow(`${esc(cs.name)} <span style="color:#6e7681;">/ ${fmt(cs.avail)} · ${fmt(cs.cap)} ea</span>`, withStepper(inp, cs.avail)));
     }
-    if (!cargoShips.length) cw.innerHTML += '<span style="color:#ff7b72; font-size:0.82rem;">No cargo ships on this colony.</span>';
+    if (!cargoShips.length) {
+      const warn = document.createElement('span');
+      warn.style.cssText = 'color:#ff7b72; font-size:0.82rem;';
+      warn.textContent = allHaulers.length ? 'No transport type selected.' : 'No cargo ships on this colony.';
+      cw.appendChild(warn);
+    }
     cw.appendChild(capLine);
     getShips = () => cargoShips.map(cs => ({ shipDefId: cs.shipDefId, quantity: b.cargoManual[cs.shipDefId] || 0 })).filter(s => s.quantity > 0);
     fuelSrc = b.src.id; fuelSys = b.target.systemId;

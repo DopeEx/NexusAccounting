@@ -367,6 +367,7 @@ const handleRuntimeMessage = async (msg, context = null) => {
     return gamePost('/api/fleet/mine', {
       sourcePlanetId: msg.sourcePlanetId, targetFieldId: msg.targetFieldId,
       ships: msg.ships, miningDuration: msg.miningDuration,
+      hangarAssignments: {},
       mineUntilFull: !!msg.mineUntilFull,
       ...(escortRetreatThreshold != null ? { escortRetreatThreshold } : {}),
     });
@@ -379,6 +380,7 @@ const handleRuntimeMessage = async (msg, context = null) => {
   if (msg.type === 'SEND_INVESTIGATE') {
     return gamePost('/api/fleet/investigate', {
       sourcePlanetId: msg.sourcePlanetId, reportId: msg.reportId, ships: msg.ships,
+      hangarAssignments: {},
     });
   }
   if (msg.type === 'COLLECT_DEBRIS') {
@@ -399,6 +401,7 @@ const handleRuntimeMessage = async (msg, context = null) => {
   if (msg.type === 'SEND_XENO_SURVEY') {
     return gamePost('/api/fleet/xeno-survey', {
       sourcePlanetId: msg.sourcePlanetId, targetMoonId: msg.targetMoonId, ships: msg.ships,
+      hangarAssignments: {},
     });
   }
   if (msg.type === 'GET_PLANETS') return getPlanets();
@@ -1600,6 +1603,39 @@ function extractFleet(arr) {
   return out;
 }
 
+const rangeTop = value => {
+  if (typeof value === 'number') return value;
+  if (!value || typeof value !== 'object') return null;
+  if (typeof value.max === 'number') return value.max;
+  return typeof value.min === 'number' ? value.min : null;
+};
+
+function spyIntelFleet(ships) {
+  return extractFleet((ships || []).map(ship => ({
+    key: ship.key,
+    quantity: rangeTop(ship.quantity ?? ship.quantityRange),
+  })));
+}
+
+function spyIntelLevels(items) {
+  return (items || []).map(item => ({
+    key: item.key,
+    name: item.name,
+    level: rangeTop(item.level ?? item.levelRange),
+  }));
+}
+
+function spyIntelResources(resources) {
+  const out = {};
+  for (const [key, value] of Object.entries(resources || {})) {
+    const quantity = typeof value === 'number'
+      ? value
+      : value && typeof value.min === 'number' ? value.min : null;
+    if (quantity != null) out[key.replace(/[A-Z]/g, c => `_${c.toLowerCase()}`)] = quantity;
+  }
+  return out;
+}
+
 // Spy reports → defender intel for the simulator (latest INTEL_KEEP kept).
 async function processSpyReports(reports) {
   if (!reports.length) return 0;
@@ -1607,6 +1643,7 @@ async function processSpyReports(reports) {
   const byId = {};
   for (const r of (spy_reports || [])) byId[r.id] = r;
   for (const r of reports) {
+    const intel = r.intel || {};
     byId[r.id] = {
       id: r.id,
       created_at: r.createdAt,
@@ -1615,10 +1652,10 @@ async function processSpyReports(reports) {
       target_user: r.targetUsername || null,
       target_system_id:   r.targetSystemId   || null,
       target_system_name: r.targetSystemName || null,
-      fleet: extractFleet(r.fleetData),
-      buildings: r.buildingData || [],
-      defense: r.defenseData || null,
-      resources: r.resourceData || {},
+      fleet: r.fleetData != null ? extractFleet(r.fleetData) : spyIntelFleet(intel.fleet && intel.fleet.ships),
+      buildings: r.buildingData ?? spyIntelLevels(intel.buildings),
+      defense: r.defenseData ?? (intel.defenses ? spyIntelLevels(intel.defenses) : null),
+      resources: r.resourceData ?? spyIntelResources(intel.resources),
     };
   }
   const merged = Object.values(byId)
@@ -2971,7 +3008,7 @@ export {
   getMarketTrades,
   processSurveyReports, processPirateReports, processMiningReports,
   processPvpReports,
-  processExpeditionReports, processSystemDebris, rebuildAggregates,
+  processExpeditionReports, processSystemDebris, processSpyReports, rebuildAggregates,
   checkDrift, ensureSchema, appendToArchive, loadArchive,
   systemFromLocation, resolveZone, backfillZones, processMissions,
   fieldMatches, purgeOldData, resolveRecordsCap,

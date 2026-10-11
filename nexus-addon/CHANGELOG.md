@@ -21,6 +21,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   filters with AND/OR matching, like debris collection.
 
 ### Changed
+- **Quartermaster**: choose which transport ship types may be used for resource transfers and outpost collections; the selection is remembered.
 - **Fleet Templates** and the Asteroids fleet-template selector are now
   available outside Expert Mode.
 - **Combat simulator**: battle requests and results now use the game's official
