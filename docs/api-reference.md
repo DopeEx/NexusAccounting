@@ -39,6 +39,8 @@ Some API reads are also made directly by the add-on UI in the game tab.
 | Reports | `GET /api/fleet/survey-cooldowns` | Survey availability |
 | Reports | `GET /api/fleet/pirate-reports` | Pirate combat reports |
 | Reports | `GET /api/fleet/reports` and `GET /api/fleet/reports/{id}` | Combat report summaries and full details |
+| Combat simulator | `GET /api/combat-simulator/bootstrap` | Ship pools, player combat profile, pirate zones, and planetary-defence keys |
+| Combat simulator | `POST /api/combat-simulator/simulate` | Runs the game's official combat calculator |
 | Reports | `GET /api/fleet/spy-reports`, `GET /api/fleet/camp-scout-reports` | Scouting reports |
 | Reports | `GET /api/fleet/mining-reports`, `GET /api/fleet/expedition-reports` | Mining and expedition results |
 | Reports | `GET /api/fleet/wormhole-runs`, `GET /api/fleet/wormholes` | Wormhole activity |
@@ -69,6 +71,17 @@ event-specific details as data-driven rather than assuming every report has the
 same fields. Spy-report payloads have also evolved: newer reports can put
 tiered scan data in `intel` rather than the legacy `fleetData`, `buildingData`,
 `defenseData`, and `resourceData` fields.
+
+### Combat simulator
+
+The addon's simulator uses the game's `/api/combat-simulator/bootstrap` and
+`/api/combat-simulator/simulate` endpoints rather than estimating outcomes
+locally. The simulation POST must be sent through the logged-in game tab, like
+other game POST requests. A successful response wraps a `report`; its losses
+and survivors are arrays keyed by `shipDefId`, and losses distinguish destroyed
+from damaged ships. The report may include extra negative-id entries for
+planetary defenses and the leadership vessel, and debris may contain resource
+keys beyond ore, silicates, and alloys.
 
 ```json
 {

@@ -354,6 +354,8 @@ browser.runtime.onMessage.addListener(async msg => {
     });
   }
   if (msg.type === 'GET_PLANETS') return getPlanets();
+  if (msg.type === 'SIM_BOOTSTRAP') return apiGet('/api/combat-simulator/bootstrap');
+  if (msg.type === 'SIM_RUN') return simulateCombat(msg.attacker, msg.defender);
   if (msg.type === 'REBUILD_AGGREGATES') return enqueue(rebuildAggregates).then(() => ({ ok: true }));
   if (msg.type === 'PURGE_OLD') return enqueue(() => purgeOldData(msg.days ?? 3)).then(() => ({ ok: true }));
   if (msg.type === 'BACKUP_NOW') return backupToDownloads(msg.reason || 'manual').then(() => ({ ok: true })).catch(e => ({ error: e.message }));
@@ -861,12 +863,12 @@ async function fuelEstimateGate() {
   FUEL_EST_TIMES.push(Date.now());
 }
 
-// POST a fleet action (mine / survey / investigate) through the game tab's
-// content script, so the request is same-origin with the session cookie —
+// POST through the game tab's content script so requests are same-origin
+// requests include the logged-in session cookie and match the game's origin.
 // identical to the game's own call. A Bearer request straight from the
 // extension is rejected by the server (500).
 async function gamePost(path, body) {
-  if (!(body.ships || []).length) return { error: 'No ships selected.' };
+  if (body.ships && !body.ships.length) return { error: 'No ships selected.' };
   if (path === '/api/fleet/fuel-estimate') await fuelEstimateGate();
   try {
     // Retry on 429, honouring Retry-After, then exponential backoff — same policy as apiFetch.
@@ -882,6 +884,14 @@ async function gamePost(path, body) {
   } catch (e) {
     return { error: e.message };
   }
+}
+
+async function simulateCombat(attacker, defender) {
+  if (!attacker?.fleet?.length) return { error: 'Attacker needs at least one ship.' };
+  if (!defender?.fleet?.length && !Object.keys(defender?.planetaryDefense?.levels || {}).length) {
+    return { error: 'Defender needs ships, or a planetary defence level.' };
+  }
+  return gamePost('/api/combat-simulator/simulate', { attacker, defender });
 }
 
 // ── Processing queue ───────────────────────────────────────────────────────

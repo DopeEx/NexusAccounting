@@ -33,7 +33,7 @@ FILES = [
     'tabs/global.js', 'tabs/surveys.js', 'tabs/pirates.js', 'tabs/mining.js',
     'tabs/battles.js', 'tabs/debris.js', 'tabs/expeditions.js', 'tabs/wormholes.js', 'tabs/finder.js', 'tabs/asteroids.js', 'tabs/fleets.js', 'tabs/scouting.js', 'tabs/xeno.js', 'tabs/market.js', 'tabs/techtree.js',
     'simulator.html', 'simulator.css', 'simulator.js',
-    'simulator-intel.js', 'simulator-validate.js', 'engine.js',
+    'simulator-intel.js',
     'chart.umd.js', 'browser-polyfill.js',
     'icons/icon128.png',
 ]

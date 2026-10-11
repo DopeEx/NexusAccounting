@@ -6,7 +6,7 @@
   "author": "Verrok",
   "license": "MPL-2.0",
   "scripts": {
-    "test": "node --test ../tests/engine.test.js ../tests/processors.test.js",
+    "test": "node --test ../tests/simulator-api.test.js ../tests/processors.test.js",
     "test:server": "node --test ../tests/server-storage.test.js",
     "test:all": "node --test ../tests/*.test.js"
   },

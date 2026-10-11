@@ -1,381 +1,503 @@
-// Combat simulator UI. The battle engine (tables, modifiers, Monte Carlo)
-// lives in engine.js, shared between this page and the node test suite.
+// Runs battles through the game's combat calculator, avoiding a parallel
+// simulator that would drift from the server's balance and combat rules.
 
-import { setStatusText } from './common.js';
 import {
-  shipDefs, setShipDefs, runSimulations, simulateOnce, computeMods,
-  NO_MODS, TECHS, TECH_MAX_LEVEL, lossesToResources,
-} from './engine.js';
-import {
-  updateDistanceFromCoords, loadIntelReports, populatePlanetPicker, _resolvedDistanceAU,
+  loadIntelReports, populatePlanetPicker, updateDistanceFromCoords,
 } from './simulator-intel.js';
-import './simulator-validate.js';   // side effect: wires the Validate button
+
+export const shipDefs = {};
+let boot = null;
+let initPromise = null;
+
+const BONUS_FIELDS = [
+  ['attackBonus', 'Attack'], ['hpBonus', 'Ship HP'], ['shipShieldBonus', 'Ship shield'],
+  ['damageReduction', 'Damage reduction'], ['shieldRegen', 'Shield regen'],
+  ['nanobotRepair', 'Nanobot repair'], ['phaseShieldDodge', 'Phase shield dodge'],
+  ['fleetTactics', 'Fleet tactics'], ['armorPierce', 'Armour pierce'],
+  ['torpedoBonus', 'Torpedo'], ['ionDisableChance', 'Ion disable chance'],
+  ['laserAttackBonus', 'Laser attack'], ['kineticAttackBonus', 'Kinetic attack'],
+  ['plasmaAttackBonus', 'Plasma attack'], ['missileAttackBonus', 'Missile attack'],
+  ['ionAttackBonus', 'Ion attack'], ['bomberAttackBonus', 'Bomber attack'],
+  ['dreadnoughtAttackBonus', 'Dreadnought attack'],
+];
 
 export function fmt(n) {
-  return Math.round(n).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return Math.round(Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
-const GROUP_ORDER = ['combat', 'special', 'recon', 'utility'];
-const GROUP_LABELS = { combat: 'Combat', special: 'Special', recon: 'Recon', utility: 'Utility' };
+export function shipDefById(id) {
+  return Object.values(shipDefs).find(s => Number(s.id) === Number(id)) || null;
+}
 
-function buildFleetInputs(tbodyId, side) {
-  const tbody = document.getElementById(tbodyId);
+export function shipIdByKey(key) {
+  if (!key) return null;
+  const def = shipDefs[key] || Object.values(shipDefs).find(s => s.reportKey === key);
+  return def?.id ?? null;
+}
+
+function sideType(side) {
+  return document.getElementById(`${side}-type`).value;
+}
+
+function shipsForSide(side) {
+  if (!boot) return [];
+  const type = sideType(side);
+  const list = type === 'player'
+    ? (boot.playerShips || []).filter(s => !s.isNpc)
+    : (boot.npcShips || []).filter(s => s.isNpc);
+  const pirates = new Set(boot.pirateShipIds || []);
+  return (type === 'pirate' ? list.filter(s => pirates.has(s.id)) : list)
+    .slice().sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0) || a.id - b.id);
+}
+
+function readQuantities(side) {
+  const quantities = {};
+  document.querySelectorAll(`input[data-side="${side}"][data-ship-id]`).forEach(input => {
+    const quantity = Math.max(0, parseInt(input.value, 10) || 0);
+    if (quantity) quantities[input.dataset.shipId] = quantity;
+  });
+  return quantities;
+}
+
+function buildFleetInputs(side) {
+  const tbody = document.getElementById(`${side}-ships`);
+  const previous = readQuantities(side);
   tbody.textContent = '';
-  const defs = Object.values(shipDefs).sort((a, b) =>
-    GROUP_ORDER.indexOf(a.shipClass) - GROUP_ORDER.indexOf(b.shipClass) || a.sortOrder - b.sortOrder);
-
-  let lastGroup = null;
-  for (const def of defs) {
-    if (def.shipClass !== lastGroup) {
-      lastGroup = def.shipClass;
-      const tr = document.createElement('tr');
-      tr.className = 'ship-group';
-      const td = document.createElement('td');
-      td.colSpan = 3;
-      td.textContent = GROUP_LABELS[def.shipClass] || def.shipClass;
-      tr.appendChild(td);
-      tbody.appendChild(tr);
-    }
-    const tr = document.createElement('tr');
-
-    const tdName = document.createElement('td');
-    tdName.className = 'ship-name';
-    tdName.textContent = def.name;
-
-    const tdStats = document.createElement('td');
-    tdStats.className = 'ship-stats';
-    tdStats.dataset.statsSide = side;
-    tdStats.dataset.key = def.key;
-    tdStats.textContent = statText(def, NO_MODS);
-
-    const tdInput = document.createElement('td');
+  for (const def of shipsForSide(side)) {
+    const row = document.createElement('tr');
+    const name = document.createElement('td');
+    name.className = 'ship-name';
+    name.textContent = def.name || def.key;
+    const stats = document.createElement('td');
+    stats.className = 'ship-stats';
+    stats.textContent = [
+      def.hp != null ? `${fmt(def.hp)} hp` : '',
+      def.shieldHp ? `${fmt(def.shieldHp)} sh` : '',
+      def.attack ? `${fmt(def.attack)} atk` : '',
+      def.weaponType || '',
+    ].filter(Boolean).join(' · ');
+    const inputCell = document.createElement('td');
     const input = document.createElement('input');
     input.type = 'number';
     input.min = 0;
-    input.value = 0;
+    input.value = previous[def.id] || 0;
     input.dataset.side = side;
-    input.dataset.key = def.key;
-    const surv = document.createElement('span');
-    surv.className = 'survivors';
-    surv.dataset.survSide = side;
-    surv.dataset.key = def.key;
-    tdInput.append(input, surv);
-
-    tr.append(tdName, tdStats, tdInput);
-    tbody.appendChild(tr);
+    input.dataset.shipId = def.id;
+    input.dataset.key = def.key || def.reportKey;
+    const survivors = document.createElement('span');
+    survivors.className = 'survivors';
+    survivors.dataset.survSide = side;
+    survivors.dataset.shipId = def.id;
+    inputCell.append(input, survivors);
+    row.append(name, stats, inputCell);
+    tbody.appendChild(row);
   }
 }
 
-function readFleet(side) {
-  const fleet = {};
-  document.querySelectorAll(`input[data-side="${side}"][data-key]`).forEach(input => {
-    const qty = parseInt(input.value, 10);
-    if (qty > 0) fleet[input.dataset.key] = qty;
-  });
-  return fleet;
+function buildBonusInputs(side) {
+  const grid = document.getElementById(`${side}-bonuses`);
+  grid.textContent = '';
+  const addInput = (key, label, integer = false) => {
+    const wrap = document.createElement('label');
+    wrap.append(`${label}${integer ? '' : ' %'}`);
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.className = 'tech-input';
+    input.step = integer ? '1' : '0.1';
+    input.min = 0;
+    input.max = integer ? 5 : undefined;
+    input.placeholder = '0';
+    input.dataset.bonusSide = side;
+    input.dataset.bonus = key;
+    wrap.appendChild(input);
+    grid.appendChild(wrap);
+  };
+  addInput('carrierHangarLevel', 'Carrier operations (0-5)', true);
+  for (const [key, label] of BONUS_FIELDS) addInput(key, label);
 }
 
-// Stat line for a ship row, with research modifiers applied (same math as the engine).
-function statText(def, mods) {
-  const attackBonus = (mods.weapon[def.weaponType] || 0) + mods.weaponAll + (mods.ship[def.key] || 0);
-  const atk = Math.round(def.attack * (1 + attackBonus));
-  const hp = Math.round(def.hp * (1 + mods.hull));
-  const sh = Math.round(def.shieldHp * (1 + mods.shield));
-  const dr = mods.damageReduction > 0 ? ` · DR ${Math.round(mods.damageReduction * 100)}%` : '';
-  return `ATK ${atk} · HP ${hp} · SH ${sh}${dr}` +
-    (def.weaponType ? ` · ${def.weaponType}` : '') + ` · ${def.armorType}`;
-}
-
-// Refresh the stat line of every ship row on one side after a tech change.
-export function updateFleetStats(side) {
-  const mods = readMods(side);
-  document.querySelectorAll(`td.ship-stats[data-stats-side="${side}"]`).forEach(td => {
-    const def = shipDefs[td.dataset.key];
-    if (!def) return;
-    const text = statText(def, mods);
-    td.textContent = text;
-    // Highlight only ships whose stats actually changed
-    td.style.color = text !== statText(def, NO_MODS) ? '#7ee787' : '';
-  });
-}
-
-function buildTechInputs(containerId, side) {
-  const container = document.getElementById(containerId);
-  container.textContent = '';
-  let lastGroup = null;
-  for (const tech of TECHS) {
-    if (tech.group !== lastGroup) {
-      lastGroup = tech.group;
-      const g = document.createElement('div');
-      g.className = 'tech-group';
-      g.textContent = tech.group;
-      container.appendChild(g);
-    }
-    const label = document.createElement('span');
-    label.className = 'tech-label';
-    const effectText = e => e.applies === 'ship' ? `+${(e.perLvl * 100).toFixed(0)}% ${e.ship} damage`
-      : e.applies === 'weapon' ? `+${(e.perLvl * 100).toFixed(0)}% ${e.weapon} damage`
-      : e.applies === 'weapon_all' ? `+${(e.perLvl * 100).toFixed(0)}% all weapon damage`
-      : e.applies === 'hull' ? `+${(e.perLvl * 100).toFixed(0)}% ship HP`
-      : e.applies === 'shield' ? `+${(e.perLvl * 100).toFixed(0)}% shield HP`
-      : `${(e.perLvl * 100).toFixed(0)}% damage reduction`;
-    label.title = effectText(tech) + (tech.also ? ` and ${effectText(tech.also)}` : '') + ' per level';
-    label.textContent = tech.name;
-
+function buildDefenseInputs() {
+  const grid = document.getElementById('defender-defense');
+  grid.textContent = '';
+  for (const defense of boot?.planetaryDefense || []) {
+    const wrap = document.createElement('label');
+    wrap.append(defense.name || defense.key);
     const input = document.createElement('input');
     input.type = 'number';
     input.className = 'tech-input';
     input.min = 0;
-    input.max = TECH_MAX_LEVEL;
     input.value = 0;
-    input.dataset.techSide = side;
-    input.dataset.tech = tech.key;
-    input.addEventListener('input', () => updateFleetStats(side));
-
-    container.append(label, input);
+    input.dataset.defKey = defense.key;
+    wrap.appendChild(input);
+    grid.appendChild(wrap);
   }
 }
 
-// Research level inputs for one side → mods for the engine.
-function readMods(side) {
-  const levels = {};
-  document.querySelectorAll(`input[data-tech-side="${side}"]`).forEach(input => {
-    const lvl = Math.min(TECH_MAX_LEVEL, Math.max(0, parseInt(input.value, 10) || 0));
-    levels[input.dataset.tech] = lvl;
-  });
-  return computeMods(levels);
+function buildZoneOptions(side) {
+  const select = document.getElementById(`${side}-zone`);
+  select.textContent = '';
+  for (const zone of boot?.pirateZones || []) {
+    const key = typeof zone === 'string' ? zone : zone.key;
+    const option = document.createElement('option');
+    option.value = key;
+    option.textContent = (typeof zone === 'string' ? zone : zone.name || key).replace(/_/g, ' ');
+    select.appendChild(option);
+  }
 }
 
-export function makeStatCard(label, value, valueClass) {
+function readBonuses(side) {
+  const bonuses = {};
+  document.querySelectorAll(`input[data-bonus-side="${side}"]`).forEach(input => {
+    if (!input.value.trim()) return;
+    const key = input.dataset.bonus;
+    const value = Number(input.value) || 0;
+    bonuses[key] = key === 'carrierHangarLevel'
+      ? Math.min(5, Math.max(0, Math.floor(value)))
+      : value / 100;
+  });
+  return bonuses;
+}
+
+function readDefenseLevels() {
+  const levels = {};
+  document.querySelectorAll('input[data-def-key]').forEach(input => {
+    const level = Math.max(0, Math.floor(Number(input.value) || 0));
+    if (level) levels[input.dataset.defKey] = level;
+  });
+  return levels;
+}
+
+function buildSide(side) {
+  const type = sideType(side);
+  const fleet = Object.entries(readQuantities(side))
+    .map(([shipDefId, quantity]) => ({ shipDefId: Number(shipDefId), quantity }));
+  const useOwnBonuses = type === 'player' && document.getElementById(`${side}-own-bonuses`).checked;
+  const levels = side === 'defender' && type === 'player' ? readDefenseLevels() : {};
+  const percentage = id => (Number(document.getElementById(id).value) || 0) / 100;
+  return {
+    type,
+    fleet,
+    ...(type === 'player' ? {
+      useOwnBonuses,
+      attachLeadership: document.getElementById(`${side}-leadership`).checked,
+      ...(!useOwnBonuses ? { bonuses: readBonuses(side) } : {}),
+      hangarAssignments: {},
+    } : {}),
+    ...(type === 'pirate' ? { pirateZone: document.getElementById(`${side}-zone`).value } : {}),
+    ...(Object.keys(levels).length ? {
+      planetaryDefense: {
+        levels,
+        buildingHpBonus: percentage('def-building-hp-bonus'),
+        planetaryDefenseBonus: percentage('def-planetary-bonus'),
+      },
+    } : {}),
+  };
+}
+
+function applySideVisibility(side) {
+  const type = sideType(side);
+  const player = type === 'player';
+  document.getElementById(`${side}-zone-wrap`).style.display = type === 'pirate' ? '' : 'none';
+  document.getElementById(`${side}-player-opts`).style.display = player ? '' : 'none';
+  document.getElementById(`${side}-bonuses`).style.display =
+    player && !document.getElementById(`${side}-own-bonuses`).checked ? '' : 'none';
+  if (side === 'defender') {
+    document.getElementById('defender-defense-box').style.display = player ? '' : 'none';
+  }
+}
+
+function wireSide(side) {
+  document.getElementById(`${side}-type`).addEventListener('change', () => {
+    buildFleetInputs(side);
+    applySideVisibility(side);
+  });
+  document.getElementById(`${side}-own-bonuses`).addEventListener('change', () => {
+    if (document.getElementById(`${side}-own-bonuses`).checked) {
+      const otherSide = side === 'attacker' ? 'defender' : 'attacker';
+      document.getElementById(`${otherSide}-own-bonuses`).checked = false;
+      applySideVisibility(otherSide);
+    }
+    applySideVisibility(side);
+  });
+}
+
+export function initSimulatorTab() {
+  if (!initPromise) {
+    initPromise = doInitSimulatorTab().catch(error => {
+      const status = document.getElementById('sim-status');
+      status.textContent = `Could not initialize simulator: ${error.message}`;
+      status.className = 'error';
+      initPromise = null;
+    });
+  }
+  return initPromise;
+}
+
+async function doInitSimulatorTab() {
+  const status = document.getElementById('sim-status');
+  status.textContent = "Loading the game's simulator…";
+  const response = await browser.runtime.sendMessage({ type: 'SIM_BOOTSTRAP' });
+  if (!response || response.error) throw new Error(response?.error || 'No response from game.');
+  boot = response.data || response;
+  for (const def of [...(boot.playerShips || []), ...(boot.npcShips || [])]) {
+    const key = def.key || def.reportKey;
+    if (key) shipDefs[key] = def;
+  }
+  if (!Object.keys(shipDefs).length) throw new Error('The game returned no ship definitions.');
+
+  for (const side of ['attacker', 'defender']) {
+    buildZoneOptions(side);
+    buildBonusInputs(side);
+    buildFleetInputs(side);
+    wireSide(side);
+    applySideVisibility(side);
+  }
+  buildDefenseInputs();
+  if (boot.ownProfile?.bonusesAvailable === false) {
+    for (const side of ['attacker', 'defender']) {
+      const toggle = document.getElementById(`${side}-own-bonuses`);
+      toggle.checked = false;
+      toggle.disabled = true;
+      applySideVisibility(side);
+    }
+  }
+  if (!boot.ownProfile?.leadership?.available) {
+    for (const side of ['attacker', 'defender']) {
+      const toggle = document.getElementById(`${side}-leadership`);
+      toggle.checked = false;
+      toggle.disabled = true;
+    }
+  }
+
+  const classSelect = document.getElementById('fleet-class');
+  for (const className of [...new Set((boot.playerShips || []).map(s => s.shipClass).filter(Boolean))].sort()) {
+    const option = document.createElement('option');
+    option.value = className;
+    option.textContent = className[0].toUpperCase() + className.slice(1);
+    classSelect.appendChild(option);
+  }
+  await Promise.all([loadIntelReports(), populatePlanetPicker()]);
+  status.textContent = `${Object.keys(shipDefs).length} ship types loaded from the game.`;
+}
+
+export function makeStatCard(label, value, valueClass = '') {
   const card = document.createElement('div');
   card.className = 'stat-card';
-  const labelDiv = document.createElement('div');
-  labelDiv.className = 'label';
-  labelDiv.textContent = label;
-  const valueDiv = document.createElement('div');
-  valueDiv.className = valueClass ? `value ${valueClass}` : 'value';
-  valueDiv.textContent = value;
-  card.append(labelDiv, valueDiv);
+  const title = document.createElement('div');
+  title.className = 'label';
+  title.textContent = label;
+  const text = document.createElement('div');
+  text.className = valueClass ? `value ${valueClass}` : 'value';
+  text.textContent = value;
+  card.append(title, text);
   return card;
 }
 
-function renderResults(result, opts) {
-  document.getElementById('results').style.display = '';
-
-  const pct = n => `${(n / opts.sims * 100).toFixed(1)}%`;
-  const o = result.outcomes;
-  const outcomeEl = document.getElementById('outcome-stats');
-  outcomeEl.textContent = '';
-  outcomeEl.append(
-    makeStatCard('Attacker wins', pct(o.attacker_won), 'win-attacker'),
-    makeStatCard('Defender wins', pct(o.defender_won), 'win-defender'),
-    makeStatCard('Defender holds (round cap)', pct(o.defender_held), 'win-defender'),
-    makeStatCard('Mutual destruction', pct(o.mutual_destruction), 'win-draw'),
-    makeStatCard('Avg rounds', result.avgRounds.toFixed(1), 'missions'),
-  );
-
-  renderLossTable('attacker-losses', result.attackerLosses);
-  renderLossTable('defender-losses', result.defenderLosses);
-  updateSurvivors('attacker', result.attackerLosses);
-  updateSurvivors('defender', result.defenderLosses);
-  renderCostCards('attacker-cost', result.attackerLosses);
-  renderCostCards('defender-cost', result.defenderLosses);
-
-  // Debris from both sides' destroyed ships
-  const a = lossesToResources(result.attackerLosses);
-  const d = lossesToResources(result.defenderLosses);
-  const debrisEl = document.getElementById('debris-stats');
-  debrisEl.textContent = '';
-  debrisEl.append(
-    makeStatCard('Debris ore',       fmt((a.ore + d.ore) * opts.debrisRate),             'ore'),
-    makeStatCard('Debris silicates', fmt((a.silicates + d.silicates) * opts.debrisRate), 'silicates'),
-    makeStatCard('Debris alloys',    fmt((a.alloys + d.alloys) * opts.debrisRate),       'alloys'),
-  );
-
-  renderFuel(result.attackerLosses, opts);
+export function lossEntries(losses) {
+  if (Array.isArray(losses)) return losses;
+  return Object.entries(losses || {}).map(([key, value]) =>
+    value && typeof value === 'object' ? { key, ...value } : { key, lost: Number(value) || 0 });
 }
 
-// One representative run, shown round by round (like the in-game report).
-function renderSampleBattle(attackerFleet, defenderFleet, opts) {
-  const tbody = document.getElementById('rounds-log');
-  tbody.textContent = '';
-  const sample = simulateOnce(attackerFleet, defenderFleet, { ...opts, trace: true });
-  for (const r of (sample.trace || [])) {
-    const tr = document.createElement('tr');
-    const lost = [
-      r.attackerLost ? `${r.attackerLost} atk` : '',
-      r.defenderLost ? `${r.defenderLost} def` : '',
-    ].filter(Boolean).join(', ') || '—';
-    const cells = [
-      `${r.round}`,
-      `${r.attackerShips}`, `${r.attackerHpPct}%`,
-      `${r.defenderShips}`, `${r.defenderHpPct}%`,
-      lost,
-    ];
-    cells.forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); });
-    tbody.appendChild(tr);
-  }
-  const note = document.createElement('tr');
-  const td = document.createElement('td');
-  td.colSpan = 6;
-  td.style.cssText = 'color:#8b949e;font-size:0.75rem;';
-  td.textContent = `Sample outcome: ${sample.outcome.replace(/_/g, ' ')} in ${sample.rounds} rounds (one run — varies; see stats above for averages).`;
-  note.appendChild(td);
-  tbody.appendChild(note);
+export function simPayload(response) {
+  const result = response?.ok && response.data ? response.data : (response?.data || response);
+  return result?.report ? result : null;
 }
 
-function renderFuel(attackerLosses, opts) {
-  const el = document.getElementById('fuel-stats');
-  el.textContent = '';
-  let rate = 0, missing = false;
-  for (const [key, l] of Object.entries(attackerLosses)) {
-    const def = shipDefs[key];
-    if (!def) continue;
-    if (!def.fuelRate) missing = true;
-    rate += (def.fuelRate || 0) * l.sent;
-  }
-  const mult = opts.roundTrip ? 2 : 1;
-  const total = rate * opts.distanceAU * mult;
-  el.append(
-    makeStatCard(`Total fuel${opts.roundTrip ? ' (round trip)' : ' (one way)'}`,
-      opts.distanceAU > 0 ? fmt(total) : '— set origin & target system', 'hydrogen'),
-    makeStatCard('Fleet rate (Σ fuelRate)', fmt(rate), 'hydrogen'),
-  );
-  if (missing) {
-    const hint = document.createElement('div');
-    hint.style.cssText = 'font-size:0.75rem;color:#8b949e;margin-top:6px;';
-    hint.textContent = 'Some ships have no fuel rate yet — open the game and Scrape Now to refresh ship data.';
-    el.appendChild(hint);
-  }
-}
-
-// Show average survivors next to each ship quantity input after a run.
-function updateSurvivors(side, losses) {
-  document.querySelectorAll(`.survivors[data-surv-side="${side}"]`).forEach(span => {
-    const l = losses[span.dataset.key];
-    if (!l) {
-      span.textContent = '';
-      return;
+function mapById(entries, field) {
+  const out = new Map();
+  for (const entry of entries || []) {
+    if (entry.shipDefId != null) out.set(Number(entry.shipDefId), Number(entry[field]) || 0);
+    else {
+      const id = shipIdByKey(entry.key);
+      if (id != null) out.set(Number(id), Number(entry[field]) || 0);
     }
-    const alive = l.sent - l.lost;
-    span.textContent = `→ ${alive.toFixed(1)} alive`;
-    span.style.color = alive >= l.sent * 0.99 ? '#56d364' : alive > 0 ? '#e3b341' : '#ff7b72';
+  }
+  return out;
+}
+
+export function fleetRows(sent, survivors, losses) {
+  const survived = mapById(survivors, 'quantity');
+  const lost = mapById(lossEntries(losses), 'lost');
+  const ids = new Set([...Object.keys(sent || {}).map(Number), ...survived.keys(), ...lost.keys()]);
+  return [...ids].map(shipDefId => {
+    const lostCount = lost.get(shipDefId) || 0;
+    const sentCount = sent?.[shipDefId] ?? ((survived.get(shipDefId) || 0) + lostCount);
+    return {
+      shipDefId,
+      sent: sentCount,
+      lost: lostCount,
+      remain: survived.has(shipDefId) ? survived.get(shipDefId) : Math.max(0, sentCount - lostCount),
+    };
   });
 }
 
-function renderLossTable(tbodyId, losses) {
-  const tbody = document.getElementById(tbodyId);
-  tbody.textContent = '';
-  for (const [key, l] of Object.entries(losses)) {
-    const def = shipDefs[key];
-    const tr = document.createElement('tr');
-    const survival = l.sent ? ((l.sent - l.lost) / l.sent * 100).toFixed(0) : 0;
-    [def ? def.name : key, fmt(l.sent), l.lost.toFixed(1), `${survival}%`].forEach(v => {
-      const td = document.createElement('td');
-      td.textContent = v;
-      tr.appendChild(td);
+function renderFleetResults(report) {
+  const container = document.getElementById('fleet-results');
+  container.textContent = '';
+  for (const side of ['attacker', 'defender']) {
+    const losses = lossEntries(report[`${side}Losses`]);
+    const entries = fleetRows(readQuantities(side), report[`${side}Survivors`], losses);
+    const card = document.createElement('section');
+    card.className = `sim-fleet-card ${side}`;
+    const heading = document.createElement('h3');
+    heading.textContent = `${side === 'attacker' ? 'Attacker' : 'Defender'} survivors`;
+    card.appendChild(heading);
+    for (const { shipDefId, lost, remain } of entries) {
+      const def = shipDefById(shipDefId);
+      const line = document.createElement('div');
+      line.className = 'sim-fleet-card-row';
+      line.textContent = `${def?.name || String(shipDefId)}: ${fmt(remain)} remain, ${fmt(lost)} removed`;
+      card.appendChild(line);
+    }
+    if (!entries.length) card.append('No ships');
+    container.appendChild(card);
+  }
+}
+
+function updateSurvivorInputs(side, losses) {
+  const lost = mapById(lossEntries(losses), 'lost');
+  const sent = readQuantities(side);
+  document.querySelectorAll(`.survivors[data-surv-side="${side}"]`).forEach(span => {
+    const id = Number(span.dataset.shipId);
+    const quantity = Number(sent[id]) || 0;
+    if (!quantity) { span.textContent = ''; return; }
+    const remain = Math.max(0, quantity - (lost.get(id) || 0));
+    span.textContent = `→ ${fmt(remain)} alive`;
+    span.style.color = remain === quantity ? '#56d364' : remain ? '#e3b341' : '#ff7b72';
+  });
+}
+
+function renderLosses(side, entries) {
+  const container = document.getElementById(`${side}-losses`);
+  container.textContent = '';
+  const losses = lossEntries(entries).filter(item => Number(item.lost) > 0);
+  if (!losses.length) { container.textContent = 'No losses'; return; }
+  for (const loss of losses) {
+    const row = document.createElement('div');
+    const name = shipDefById(loss.shipDefId)?.name || loss.name || loss.key || 'Ship';
+    row.textContent = `${fmt(loss.lost)}× ${name}` +
+      (loss.destroyed != null || loss.damaged != null
+        ? ` (${fmt(loss.destroyed)} destroyed, ${fmt(loss.damaged)} damaged)` : '');
+    container.appendChild(row);
+  }
+}
+
+function renderRounds(rounds) {
+  const container = document.getElementById('rounds-log');
+  container.textContent = '';
+  document.getElementById('rounds-count').textContent = rounds?.length ? `(${rounds.length})` : '';
+  for (const round of rounds || []) {
+    const events = round.events || [];
+    const damage = side => events.filter(event => event.side === side)
+      .reduce((sum, event) => sum + (Number(event.totalDamage) || 0), 0);
+    const destroyed = side => events.filter(event => event.side === side)
+      .flatMap(event => event.shipsDestroyed || [])
+      .map(item => `${fmt(item.lost)}× ${shipDefById(item.shipDefId)?.name || item.name || item.key}`);
+    const row = document.createElement('div');
+    row.className = 'sim-round-card';
+    row.textContent = `Round ${round.round}: ${fmt(damage('attacker'))} attacker damage, ` +
+      `${fmt(damage('defender'))} defender damage. ` +
+      `Ships lost — attacker: ${destroyed('defender').join(', ') || 'none'}; ` +
+      `defender: ${destroyed('attacker').join(', ') || 'none'}.`;
+    container.appendChild(row);
+  }
+}
+
+function renderResults(result) {
+  const report = result.report;
+  const outcome = result.exact?.outcome || report.outcome || 'unknown';
+  const stats = document.getElementById('outcome-stats');
+  stats.textContent = '';
+  stats.append(makeStatCard('Outcome', outcome.replace(/_/g, ' ')));
+  const rounds = result.exact?.rounds ?? result.summary?.averageRounds ?? report.rounds?.length ?? 0;
+  stats.append(makeStatCard('Rounds', String(rounds)));
+  if (result.scale?.mode === 'scaled') {
+    stats.append(makeStatCard('Scaled battle', `÷${fmt(result.scale.factor)} — estimates`));
+  }
+  for (const leadership of report.leadershipOutcomes || []) {
+    stats.append(makeStatCard(leadership.name || 'Leadership vessel',
+      leadership.destroyed ? 'destroyed' : `${fmt(leadership.hullAfter)} hull remaining`));
+  }
+  renderFleetResults(report);
+  updateSurvivorInputs('attacker', report.attackerLosses);
+  updateSurvivorInputs('defender', report.defenderLosses);
+  renderLosses('attacker', report.attackerLosses);
+  renderLosses('defender', report.defenderLosses);
+  renderRounds(report.rounds);
+
+  const debris = document.getElementById('debris-stats');
+  debris.textContent = '';
+  const debrisValues = report.debris || {};
+  for (const [key, value] of Object.entries(debrisValues)) {
+    debris.append(makeStatCard(key.replace(/_/g, ' '), fmt(value)));
+  }
+  document.getElementById('results').style.display = '';
+}
+
+document.getElementById('btn-load-fleet').addEventListener('click', async function () {
+  this.disabled = true;
+  const status = document.getElementById('sim-status');
+  try {
+    const result = await browser.runtime.sendMessage({
+      type: 'GET_FLEET', planetId: document.getElementById('fleet-planet').value,
     });
-    tbody.appendChild(tr);
+    if (result?.error) { status.textContent = `Load fleet failed: ${result.error}`; return; }
+    for (const input of document.querySelectorAll('input[data-side="attacker"][data-ship-id]')) {
+      if (document.getElementById('fleet-class').value &&
+          shipDefById(input.dataset.shipId)?.shipClass !== document.getElementById('fleet-class').value) continue;
+      input.value = result.fleet?.[input.dataset.key] || 0;
+    }
+    const selected = document.getElementById('fleet-planet').selectedOptions[0];
+    status.textContent = `Loaded fleet from ${selected?.textContent || 'selected planet'}.`;
+    if (selected?.dataset.systemName) {
+      document.getElementById('atk-system').value = selected.dataset.systemName;
+      await updateDistanceFromCoords();
+    }
+  } catch (error) {
+    status.textContent = `Load fleet failed: ${error.message}`;
+  } finally {
+    this.disabled = false;
   }
-  if (!Object.keys(losses).length) {
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = 4;
-    td.style.color = '#484f58';
-    td.textContent = 'No ships';
-    tr.appendChild(td);
-    tbody.appendChild(tr);
-  }
-}
+});
 
-function renderCostCards(elId, losses) {
-  const cost = lossesToResources(losses);
-  const el = document.getElementById(elId);
-  el.textContent = '';
-  el.append(
-    makeStatCard('Ore lost',       fmt(cost.ore),       'ore'),
-    makeStatCard('Silicates lost', fmt(cost.silicates), 'silicates'),
-    makeStatCard('Hydrogen lost',  fmt(cost.hydrogen),  'hydrogen'),
-    makeStatCard('Alloys lost',    fmt(cost.alloys),    'alloys'),
-  );
-}
-
-// ── Init ───────────────────────────────────────────────────────────────────
-
-async function init() {
+document.getElementById('btn-run').addEventListener('click', async function () {
   const status = document.getElementById('sim-status');
-  const { ships } = await browser.storage.local.get('ships');
-
-  const defs = Object.values(ships || {});
-  if (!defs.length || defs.some(d => d.hp === undefined)) {
-    setStatusText(status, 'Ship combat stats missing — open the dashboard and click "Scrape Now" first.');
-    status.className = 'error';
+  if (!boot) { status.textContent = 'Simulator data not loaded yet.'; return; }
+  const attacker = buildSide('attacker');
+  const defender = buildSide('defender');
+  if (!attacker.fleet.length) { status.textContent = 'Attacker needs at least one ship.'; return; }
+  if (!defender.fleet.length && !defender.planetaryDefense) {
+    status.textContent = 'Defender needs ships, or a planetary defence level.';
     return;
   }
-
-  const map = {};
-  for (const def of defs) map[def.key] = def;
-  setShipDefs(map);
-
-  buildFleetInputs('attacker-ships', 'attacker');
-  buildFleetInputs('defender-ships', 'defender');
-  buildTechInputs('attacker-techs', 'attacker');
-  buildTechInputs('defender-techs', 'defender');
-  await Promise.all([loadIntelReports(), populatePlanetPicker()]);
-  setStatusText(status, `${defs.length} ship types loaded.`);
-}
-
-document.getElementById('btn-run').addEventListener('click', async function() {
-  const attackerFleet = readFleet('attacker');
-  const defenderFleet = readFleet('defender');
-  const status = document.getElementById('sim-status');
-  const hasDefense = ['def-missile','def-laser','def-railgun','def-plasma','def-ion','def-ew']
-    .some(id => (parseInt(document.getElementById(id).value, 10) || 0) > 0);
-  if (!Object.keys(attackerFleet).length || (!Object.keys(defenderFleet).length && !hasDefense)) {
-    setStatusText(status, 'Attacker needs ships; defender needs ships or a turret level.');
-    return;
-  }
-  setStatusText(status, 'Simulating…');
-  await updateDistanceFromCoords();
-  const distanceAU = _resolvedDistanceAU;
-
-  const opts = {
-    sims: Math.min(10000, Math.max(1, parseInt(document.getElementById('opt-sims').value, 10) || 100)),
-    maxRounds: Math.min(20, Math.max(1, parseInt(document.getElementById('opt-rounds').value, 10) || 10)),
-    variance: (parseInt(document.getElementById('opt-variance').value, 10) || 0) / 100,
-    debrisRate: Math.min(1, Math.max(0, (parseInt(document.getElementById('opt-debris').value, 10) || 0) / 100)),
-    shieldRegen: document.getElementById('opt-shield-regen').checked,
-    distanceAU,
-    roundTrip: document.getElementById('opt-roundtrip').checked,
-    attackerMods: readMods('attacker'),
-    defenderMods: readMods('defender'),
-    defenderTier: document.getElementById('def-marauder').checked ? 'marauder' : null,
-    defense: {
-      missile_defense: Math.max(0, parseInt(document.getElementById('def-missile').value, 10) || 0),
-      laser_defense:   Math.max(0, parseInt(document.getElementById('def-laser').value, 10) || 0),
-      railgun_defense: Math.max(0, parseInt(document.getElementById('def-railgun').value, 10) || 0),
-      plasma_defense:  Math.max(0, parseInt(document.getElementById('def-plasma').value, 10) || 0),
-      ion_defense:     Math.max(0, parseInt(document.getElementById('def-ion').value, 10) || 0),
-      ew_system:       Math.max(0, parseInt(document.getElementById('def-ew').value, 10) || 0),
-      shield_generator: Math.max(0, parseInt(document.getElementById('def-shield').value, 10) || 0), // ponytail: collected, no effect modeled yet — unknown mechanic
-    },
-  };
-
-  // Let the status paint before the (potentially long) synchronous run
-  setTimeout(() => {
-    const result = runSimulations(attackerFleet, defenderFleet, opts);
-    renderResults(result, opts);
-    renderSampleBattle(attackerFleet, defenderFleet, opts);
-    setStatusText(status, `Done — ${opts.sims} simulations.`);
+  this.disabled = true;
+  status.textContent = 'Asking the game to simulate…';
+  try {
+    await updateDistanceFromCoords();
+    const response = await browser.runtime.sendMessage({ type: 'SIM_RUN', attacker, defender });
+    if (response?.error) { status.textContent = response.error; return; }
+    const result = simPayload(response);
+    if (!result) {
+      status.textContent = 'The game reply did not contain a combat report.';
+      return;
+    }
+    renderResults(result);
+    status.textContent = result.scale?.mode === 'scaled'
+      ? `Simulated by the game, scaled ÷${fmt(result.scale.factor)} — results are estimates.`
+      : `Simulated by the game — ${(result.report.rounds || []).length} rounds.`;
     document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
-  }, 10);
+  } catch (error) {
+    status.textContent = `Simulation failed: ${error.message}`;
+  } finally {
+    this.disabled = false;
+  }
 });
 
 document.getElementById('btn-clear').addEventListener('click', () => {
-  document.querySelectorAll('.fleet-table input').forEach(i => { i.value = 0; });
-  document.querySelectorAll('.survivors').forEach(s => { s.textContent = ''; });
+  document.querySelectorAll('.fleet-table input').forEach(input => { input.value = 0; });
+  document.querySelectorAll('.survivors').forEach(span => { span.textContent = ''; });
   document.getElementById('results').style.display = 'none';
 });
 
-// Runs after every script on the page is loaded (this file is last).
-init();
+initSimulatorTab();
