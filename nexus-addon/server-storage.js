@@ -11,6 +11,7 @@
 
   const ACTIVE_SERVER_KEY = 'nexus_active_server';
   const MIGRATION_KEY = 'nexus_server_storage_v1';
+  const UNIVERSE_CATALOG_KEY = 'nexus_universe_catalog';
   const PREFIX = 'nexus_server:';
   const SERVERS = Object.freeze({
     s0: Object.freeze({
@@ -28,20 +29,43 @@
       origin: 'https://nf.nexuslegacy.space',
     }),
   });
+  let universeCatalog = [];
+  let universeCatalogFetchedAt = 0;
 
   function normalizeServerKey(key) {
-    return Object.hasOwn(SERVERS, key) ? key : 's0';
+    return isValidServerKey(key) ? key : 's0';
+  }
+
+  function isValidServerKey(key) {
+    return typeof key === 'string' && /^[a-z0-9-]{1,63}$/.test(key);
+  }
+
+  function serverForKey(key) {
+    if (Object.hasOwn(SERVERS, key)) return SERVERS[key];
+    const universe = universeCatalog.find(item => item.key === key);
+    return {
+      key,
+      id: universe?.id || key.toUpperCase(),
+      name: universe?.name || key.toUpperCase(),
+      hostname: `${key}.nexuslegacy.space`,
+      origin: `https://${key}.nexuslegacy.space`,
+    };
   }
 
   function serverKeyFromHostname(hostname) {
     const host = String(hostname || '').toLowerCase();
-    return Object.values(SERVERS).find(server => server.hostname === host)?.key || null;
+    const known = Object.values(SERVERS).find(server => server.hostname === host);
+    if (known) return known.key;
+    const match = /^([a-z0-9-]{1,63})\.nexuslegacy\.space$/.exec(host);
+    return match ? match[1] : null;
   }
 
   function serverFromUrl(url) {
     try {
-      const key = serverKeyFromHostname(new URL(url).hostname);
-      return key ? SERVERS[key] : null;
+      const parsed = new URL(url);
+      if (parsed.protocol !== 'https:') return null;
+      const key = serverKeyFromHostname(parsed.hostname);
+      return key ? serverForKey(key) : null;
     } catch {
       return null;
     }
@@ -53,6 +77,9 @@
 
   const baseLocal = extensionApi()?.storage?.local;
   let forcedServerKey = null;
+  // Serialize server-scoped operations; nested scopes carry this context token.
+  let activeServerContext = null;
+  let serverOperationQueue = Promise.resolve();
 
   function rawStorage() {
     const local = baseLocal || extensionApi()?.storage?.local;
@@ -104,25 +131,81 @@
   }
 
   async function getActiveServer() {
-    return SERVERS[await getActiveServerKey()];
+    return serverForKey(await getActiveServerKey());
   }
 
   async function setActiveServer(key) {
-    if (!Object.hasOwn(SERVERS, key)) throw new Error(`Unknown Nexus Legacy server: ${key}`);
+    if (!isValidServerKey(key)) throw new Error(`Unknown Nexus Legacy server: ${key}`);
     await rawStorage().set({ [ACTIVE_SERVER_KEY]: key });
-    return SERVERS[key];
+    return serverForKey(key);
   }
 
-  async function withServer(key, run) {
-    const normalized = normalizeServerKey(key);
+  async function withServer(key, run, parentContext = null) {
+    if (!isValidServerKey(key)) throw new Error(`Unknown Nexus Legacy server: ${key}`);
+    if (parentContext && parentContext === activeServerContext) {
+      const previous = forcedServerKey;
+      forcedServerKey = key;
+      try {
+        return await run(serverForKey(key), parentContext);
+      } finally {
+        forcedServerKey = previous;
+      }
+    }
+
+    const previousOperation = serverOperationQueue;
+    let releaseOperation;
+    serverOperationQueue = new Promise(resolve => { releaseOperation = resolve; });
+    await previousOperation;
     const prevForced = forcedServerKey;
-    forcedServerKey = normalized;
+    const context = Object.freeze({});
+    activeServerContext = context;
+    forcedServerKey = key;
     try {
-      await rawStorage().set({ [ACTIVE_SERVER_KEY]: normalized });
-      return await run(SERVERS[normalized]);
+      return await run(serverForKey(key), context);
     } finally {
       forcedServerKey = prevForced;
+      activeServerContext = null;
+      releaseOperation();
     }
+  }
+
+  function normalizeUniverseCatalog(items) {
+    if (!Array.isArray(items)) return [];
+    const unique = new Map();
+    for (const item of items) {
+      const key = item?.key;
+      if (!isValidServerKey(key)) continue;
+      unique.set(key, {
+        key,
+        ...(typeof item.id === 'string' ? { id: item.id } : {}),
+        name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : key.toUpperCase(),
+      });
+    }
+    return [...unique.values()];
+  }
+
+  async function getUniverseCatalog() {
+    await ensureMigrated();
+    const stored = await rawStorage().get(UNIVERSE_CATALOG_KEY);
+    const value = stored[UNIVERSE_CATALOG_KEY];
+    universeCatalog = normalizeUniverseCatalog(Array.isArray(value) ? value : value?.items);
+    universeCatalogFetchedAt = Number(Array.isArray(value) ? 0 : value?.fetchedAt) || 0;
+    return universeCatalog.map(item => ({ ...item }));
+  }
+
+  async function setUniverseCatalog(items) {
+    await ensureMigrated();
+    universeCatalog = normalizeUniverseCatalog(items);
+    universeCatalogFetchedAt = Date.now();
+    await rawStorage().set({
+      [UNIVERSE_CATALOG_KEY]: { items: universeCatalog, fetchedAt: universeCatalogFetchedAt },
+    });
+    return universeCatalog.map(item => ({ ...item }));
+  }
+
+  async function getUniverseCatalogFetchedAt() {
+    await getUniverseCatalog();
+    return universeCatalogFetchedAt;
   }
 
   let migrationBrowser = null;
@@ -133,7 +216,8 @@
   }
 
   function isInternalKey(key) {
-    return key === ACTIVE_SERVER_KEY || key === MIGRATION_KEY || key.startsWith(PREFIX);
+    return key === ACTIVE_SERVER_KEY || key === MIGRATION_KEY ||
+      key === UNIVERSE_CATALOG_KEY || key.startsWith(PREFIX);
   }
 
   async function ensureMigrated() {
@@ -314,6 +398,9 @@
     setActiveServer,
     withServer,
     serverFromUrl,
+    getUniverseCatalog,
+    getUniverseCatalogFetchedAt,
+    setUniverseCatalog,
   });
 
   const tabs = app?.tabs;

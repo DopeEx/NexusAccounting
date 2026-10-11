@@ -57,6 +57,7 @@ export function resetScoutingTab() {
   scAutoInvestigateRunning = false;
   scAutoSalvageRunning = false;
   scAutoDebrisRunning = false;
+  scFuelDisplayCache.clear();
   scTicks.scan = [];
   scTicks.invest = [];
   scTicks.debris = [];
@@ -65,6 +66,52 @@ export function resetScoutingTab() {
 // Per-surface bar updaters, each rebuilt by its own render. The 1s tick advances
 // all of them. Keyed so one render doesn't drop another surface's tickers.
 const scTicks = { scan: [], invest: [], debris: [], salvage: [] };
+const scFuelDisplayCache = new Map();
+
+function fuelDisplayKey(type, sourceId, systemId, inputs) {
+  return `${type}|${sourceId}|${systemId}|${inputs}`;
+}
+
+function selectedCargoSignature(cargo) {
+  return cargo.map(s => `${s.shipDefId}:${s.cap}`).sort().join(',');
+}
+
+function fleetSignature(ships) {
+  return ships.map(s => `${s.shipDefId}:${s.quantity}`).sort().join(',');
+}
+
+function cachedFuelDisplay(key) {
+  return scFuelDisplayCache.get(key) || null;
+}
+
+function hasFuelDisplayForFleet(key, ships) {
+  return cachedFuelDisplay(key)?.fleet === fleetSignature(ships);
+}
+
+function applyFuelDisplay(display, fuelCell, timeCell) {
+  if (!display || !fuelCell) return;
+  fuelCell.textContent = display.fuel;
+  fuelCell.title = display.title;
+  fuelCell.style.color = display.color;
+  if (timeCell) timeCell.textContent = display.time;
+}
+
+function rememberFuelDisplay(key, estimate, fuelCell, timeCell, ships) {
+  const display = estimate.error
+    ? { fuel: '—', time: '—', title: estimate.error, color: '' }
+    : {
+      fuel: String(estimate.fuelCost),
+      time: estimate.travelTime != null ? fmtCountdown(estimate.travelTime * 1000) : '—',
+      title: estimate.inRange === false ? 'Out of range' : `distance ${estimate.distance.toFixed(1)} ly`,
+      color: estimate.inRange === false ? '#ff7b72' : '',
+      fleet: fleetSignature(ships),
+    };
+  if (scFuelDisplayCache.size >= 500 && !scFuelDisplayCache.has(key)) {
+    scFuelDisplayCache.delete(scFuelDisplayCache.keys().next().value);
+  }
+  scFuelDisplayCache.set(key, display);
+  applyFuelDisplay(display, fuelCell, timeCell);
+}
 
 const MISSION_LABELS = { survey: 'Survey', investigate: 'Investigate',
   collect_debris: 'Collect Debris', collect_salvage: 'Collect Salvage' };
@@ -197,14 +244,14 @@ export async function initScoutingTab() {
 
   document.getElementById('sc-scan').addEventListener('click', launchScan);
   document.getElementById('sc-refresh').addEventListener('click', refreshScoutingData);
-  document.getElementById('sc-planet').addEventListener('change', e => { rememberSelection('sc-planet', e.target.value); renderSurveys(); computeDebrisFuel(); computeSalvageFuel(); updateAvail(); });
+  document.getElementById('sc-planet').addEventListener('change', e => { rememberSelection('sc-planet', e.target.value); renderSurveys(); renderDebris(); renderSalvage(); updateAvail(); });
 
   document.getElementById('sc-scan-template').addEventListener('change', e => rememberSelection('sc-scan-template', e.target.value));
-  document.getElementById('sc-inv-template').addEventListener('change', e => { rememberSelection('sc-inv-template', e.target.value); computeFuel(); });
+  document.getElementById('sc-inv-template').addEventListener('change', e => { rememberSelection('sc-inv-template', e.target.value); renderSurveys(); });
   document.getElementById('sc-debris-hidden').addEventListener('click', () => { scShowHidden = !scShowHidden; renderDebris(); });
   document.getElementById('sc-debris-invonly').addEventListener('change', e => { scInvestigatedOnly = e.target.checked; renderDebris(); });
   document.getElementById('sc-debris-nearest').checked = savedSel['sc-debris-nearest'] === true;
-  document.getElementById('sc-debris-nearest').addEventListener('change', e => { rememberSelection('sc-debris-nearest', e.target.checked); computeDebrisFuel(); });
+  document.getElementById('sc-debris-nearest').addEventListener('change', e => { rememberSelection('sc-debris-nearest', e.target.checked); renderDebris(); });
   document.getElementById('sc-debris-auto').checked = savedSel['sc-debris-auto'] === true;
   document.getElementById('sc-debris-auto').addEventListener('change', e => { rememberSelection('sc-debris-auto', e.target.checked); });
   document.getElementById('sc-auto').checked = savedSel['sc-auto'] === true;
@@ -773,6 +820,9 @@ function renderSurveys() {
   const list = document.getElementById('sc-surveys-list');
   list.textContent = '';
   scTicks.invest = []; // Reset the invest ticks for new render
+  const planetId = Number(document.getElementById('sc-planet').value);
+  const templateId = document.getElementById('sc-inv-template').value;
+  const templateSignature = JSON.stringify(scTemplates.find(t => String(t.id) === templateId)?.ships || {});
   document.getElementById('sc-count').textContent =
     `${scPending.length} awaiting investigation` + (scReturning.length ? ` · ${scReturning.length} returning` : '');
   const now = Date.now();
@@ -824,6 +874,9 @@ function renderSurveys() {
     const card = document.createElement('div');
     card.className = 'sc-inv-card';
     card.dataset.system = r.systemId;
+    const estimateKey = fuelDisplayKey('investigate', planetId, r.systemId, `${templateId}|${templateSignature}`);
+    card.dataset.fuelKey = estimateKey;
+    const estimate = cachedFuelDisplay(estimateKey);
     if (r.anomalyExpiresAt) card.dataset.expires = r.anomalyExpiresAt;
 
     const action = document.createElement('div');
@@ -849,12 +902,15 @@ function renderSurveys() {
       const zoneVal = zoneItem.querySelector('.sc-inv-meta-val');
       if (zoneVal) zoneVal.style.color = ZONE_COLORS[r.securityZone] || ZONE_COLORS.unknown;
     }
+    const fuelItem = makeMetaItem('Fuel Cost', estimate?.fuel ?? '…', 'sc-fuel');
+    const timeItem = makeMetaItem('Travel Time', estimate?.time ?? '…', 'sc-time');
+    applyFuelDisplay(estimate, fuelItem.querySelector('.sc-inv-meta-val'), timeItem.querySelector('.sc-inv-meta-val'));
     meta.append(
       systemItem,
       makeMetaItem('Anomaly', r.eventTitle || r.eventType || '—'),
       zoneItem,
-      makeMetaItem('Fuel Cost', '…', 'sc-fuel'),
-      makeMetaItem('Travel Time', '…', 'sc-time'),
+      fuelItem,
+      timeItem,
       makeMetaItem('Expires in', r.anomalyExpiresAt ? fmtCountdown(new Date(r.anomalyExpiresAt) - now) : '—', 'sc-timer'),
     );
 
@@ -938,13 +994,13 @@ let fuelGen = 0;
 async function computeFuel() {
   const gen = ++fuelGen;
   const planetId = Number(document.getElementById('sc-planet').value);
-  const fuelCells = () => document.querySelectorAll('#sc-surveys-list .sc-fuel');
-  const timeCells = () => document.querySelectorAll('#sc-surveys-list .sc-time');
   const r = await templateShips(document.getElementById('sc-inv-template').value, planetId);
   if (gen !== fuelGen) return;
   if (r.error) {
-    fuelCells().forEach(c => { c.textContent = '—'; c.title = r.error; });
-    timeCells().forEach(c => { c.textContent = '—'; });
+    for (const card of document.querySelectorAll('#sc-surveys-list .sc-inv-card')) {
+      rememberFuelDisplay(card.dataset.fuelKey, { error: r.error },
+        card.querySelector('.sc-fuel'), card.querySelector('.sc-time'));
+    }
     return;
   }
   const ships = r.ships;
@@ -955,13 +1011,10 @@ async function computeFuel() {
     const timeCell = tr.querySelector('.sc-time');
     const sysId = Number(tr.dataset.system);
     if (!cell || !sysId) continue;
+    if (hasFuelDisplayForFleet(tr.dataset.fuelKey, ships)) continue;
     const est = await fuelEstimate(planetId, sysId, ships, 'investigate');
     if (gen !== fuelGen) return;
-    if (est.error) { cell.textContent = '—'; cell.title = est.error; if (timeCell) timeCell.textContent = '—'; continue; }
-    cell.textContent = `${est.fuelCost}`;
-    cell.style.color = est.inRange === false ? '#ff7b72' : '';
-    cell.title = est.inRange === false ? 'Out of range' : `distance ${est.distance.toFixed(1)} ly`;
-    if (timeCell) timeCell.textContent = est.travelTime != null ? fmtCountdown(est.travelTime * 1000) : '—';
+    rememberFuelDisplay(tr.dataset.fuelKey, est, cell, timeCell, ships);
   }
 }
 
@@ -1189,8 +1242,8 @@ function renderCargoToggles() {
       if (on) scCargoSel.delete(s.shipDefId); else scCargoSel.add(s.shipDefId);
       rememberSelection('sc-cargo-ships', [...scCargoSel]);
       renderCargoToggles();
-      computeDebrisFuel();
-      computeSalvageFuel();
+      renderDebris();
+      renderSalvage();
     });
     box.appendChild(b);
   }
@@ -1360,11 +1413,22 @@ function renderDebris() {
     return item;
   };
 
+  const cargo = selectedCargo();
+  const cargoSignature = selectedCargoSignature(cargo);
+  const nameOf = id => (scCargoShips.find(c => c.shipDefId === id) || {}).name || '#' + id;
   for (const f of rows) {
     const card = document.createElement('div');
     card.className = 'sc-debris-card';
     if (f.systemId != null) card.dataset.system = f.systemId;
     card.dataset.total = f.total || 0;
+    const sourceId = f.systemId != null ? debrisSourcePlanet(f.systemId)?.id : null;
+    const estimateKey = fuelDisplayKey('collect_debris', sourceId, f.systemId,
+      `${f.total || 0}|${cargoSignature}`);
+    card.dataset.fuelKey = estimateKey;
+    const estimate = cachedFuelDisplay(estimateKey);
+    const plannedShips = planFleet(f.total || 0, cargo);
+    const plannedNames = plannedShips.map(s => `${s.quantity}× ${nameOf(s.shipDefId)}`);
+    const plannedShipCount = plannedShips.map(s => shipShortName(nameOf(s.shipDefId)));
     if (f.expires) card.dataset.expires = f.expires;
     const hidden = scHiddenDebris.has(f.id);
     if (hidden) card.style.opacity = '0.45';
@@ -1409,14 +1473,20 @@ function renderDebris() {
       ['Sil', f.silicates],
       ['Alloy', f.alloys],
     ].filter(([, value]) => value).map(([label, value]) => `${label} ${value.toLocaleString()}`).join(', ');
+    const shipItem = makeMetaItem('Number of Ships', plannedShips.length ? plannedShipCount.join(', ') : '—', 'sc-debris-shipn');
+    const fuelItem = makeMetaItem('Fuel Cost', estimate?.fuel ?? '…', 'sc-debris-fuel');
+    const timeItem = makeMetaItem('Travel Time', estimate?.time ?? '…', 'sc-debris-time');
+    applyFuelDisplay(estimate, fuelItem.querySelector('.sc-debris-meta-val'), timeItem.querySelector('.sc-debris-meta-val'));
+    const shipValue = shipItem.querySelector('.sc-debris-meta-val');
+    if (shipValue) shipValue.title = plannedShips.length ? plannedNames.join(', ') : '';
     meta.append(
       systemItem,
       zoneItem,
       makeMetaItem('Resources left', resourcesLeft || '—', 'sc-debris-breakdown'),
       makeMetaItem('Total', (f.total || 0).toLocaleString()),
-      makeMetaItem('Number of Ships', '…', 'sc-debris-shipn'),
-      makeMetaItem('Fuel Cost', '…', 'sc-debris-fuel'),
-      makeMetaItem('Travel Time', '…', 'sc-debris-time'),
+      shipItem,
+      fuelItem,
+      timeItem,
       makeMetaItem('Expires in', f.expires ? fmtCountdown(new Date(f.expires) - Date.now()) : '—', 'sc-debris-timer'),
     );
 
@@ -1444,36 +1514,27 @@ function renderDebris() {
 let debrisFuelGen = 0;
 async function computeDebrisFuel() {
   const gen = ++debrisFuelGen;
-  const sel = q => () => document.querySelectorAll(`#sc-debris-list .${q}`);
-  const fuelCells = sel('sc-debris-fuel');
-  const shipCells = sel('sc-debris-shipn');
-  const timeCells = sel('sc-debris-time');
   const cargo = selectedCargo();
   if (!cargo.length) {
-    fuelCells().forEach(c => { c.textContent = '—'; c.title = 'Select cargo ships above'; });
-    shipCells().forEach(c => { c.textContent = '—'; c.title = ''; });
-    timeCells().forEach(c => { c.textContent = '—'; });
+    document.querySelectorAll('#sc-debris-list .sc-debris-card').forEach(card => {
+      rememberFuelDisplay(card.dataset.fuelKey, { error: 'Select cargo ships above' },
+        card.querySelector('.sc-debris-fuel'), card.querySelector('.sc-debris-time'));
+    });
     return;
   }
-  const nameOf = id => (scCargoShips.find(c => c.shipDefId === id) || {}).name || '#' + id;
   const availabilityByPlanet = new Map();
   for (const tr of document.querySelectorAll('#sc-debris-list .sc-debris-card')) {
     if (gen !== debrisFuelGen) return;
     const ships = planFleet(Number(tr.dataset.total) || 0, cargo);
-    const named = ships.map(s => `${s.quantity}× ${nameOf(s.shipDefId)}`).join(', ');
-    const shortNamed = ships.map(s => `${s.quantity}× ${shipShortName(nameOf(s.shipDefId))}`).join(', ');
-    const nCell = tr.querySelector('.sc-debris-shipn');
-    if (nCell) {
-      nCell.textContent = ships.length ? shortNamed : '—';
-      nCell.title = ships.length ? named : '';
-    }
-
     const cell = tr.querySelector('.sc-debris-fuel');
     const timeCell = tr.querySelector('.sc-debris-time');
     const sysId = Number(tr.dataset.system);
     const srcId = debrisSourcePlanet(sysId)?.id;
     if (!cell || !sysId || !srcId) continue;
-    if (!ships.length) { cell.textContent = '—'; if (timeCell) timeCell.textContent = '—'; continue; }
+    if (!ships.length) {
+      rememberFuelDisplay(tr.dataset.fuelKey, { error: 'No selected cargo ships can carry this field.' }, cell, timeCell);
+      continue;
+    }
     let av = availabilityByPlanet.get(srcId);
     if (!av) {
       av = await browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId: srcId });
@@ -1481,23 +1542,18 @@ async function computeDebrisFuel() {
       availabilityByPlanet.set(srcId, av);
     }
     if (av.error) {
-      cell.textContent = '—'; cell.title = av.error;
-      if (timeCell) timeCell.textContent = '—';
+      rememberFuelDisplay(tr.dataset.fuelKey, { error: av.error }, cell, timeCell);
       continue;
     }
     const capped = capShipsToAvailable(ships, av.available).ships;
     if (!capped.length) {
-      cell.textContent = '—'; cell.title = 'None of the selected cargo ships are on this planet.';
-      if (timeCell) timeCell.textContent = '—';
+      rememberFuelDisplay(tr.dataset.fuelKey, { error: 'None of the selected cargo ships are on this planet.' }, cell, timeCell);
       continue;
     }
+    if (hasFuelDisplayForFleet(tr.dataset.fuelKey, capped)) continue;
     const est = await fuelEstimate(srcId, sysId, capped, 'collect_debris');
     if (gen !== debrisFuelGen) return;
-    if (est.error) { cell.textContent = '—'; cell.title = est.error; if (timeCell) timeCell.textContent = '—'; continue; }
-    cell.textContent = `${est.fuelCost}`;
-    cell.style.color = est.inRange === false ? '#ff7b72' : '';
-    cell.title = est.inRange === false ? 'Out of range' : `distance ${est.distance.toFixed(1)} ly`;
-    if (timeCell) timeCell.textContent = est.travelTime != null ? fmtCountdown(est.travelTime * 1000) : '—';
+    rememberFuelDisplay(tr.dataset.fuelKey, est, cell, timeCell, capped);
   }
 }
 
@@ -1637,11 +1693,22 @@ function renderSalvage() {
     return d;
   };
 
+  const cargo = selectedCargo();
+  const cargoSignature = selectedCargoSignature(cargo);
+  const planetId = Number(document.getElementById('sc-planet').value);
+  const nameOf = id => (scCargoShips.find(c => c.shipDefId === id) || {}).name || '#' + id;
   for (const s of sorted) {
     const card = document.createElement('div');
     card.className = 'sc-salvage-card';
     if (s.systemId != null) card.dataset.system = s.systemId;
     card.dataset.total = s.total || 0;
+    const estimateKey = fuelDisplayKey('collect_salvage', planetId, s.systemId,
+      `${s.total || 0}|${cargoSignature}`);
+    card.dataset.fuelKey = estimateKey;
+    const estimate = cachedFuelDisplay(estimateKey);
+    const plannedShips = planFleet(s.total || 0, cargo);
+    const plannedNames = plannedShips.map(ship => `${ship.quantity}× ${nameOf(ship.shipDefId)}`);
+    const plannedShipCount = plannedShips.map(ship => shipShortName(nameOf(ship.shipDefId)));
     if (s.expires) card.dataset.expires = s.expires;
 
     const action = document.createElement('div');
@@ -1671,14 +1738,20 @@ function renderSalvage() {
       const zoneVal = zoneItem.querySelector('.sc-salvage-meta-val');
       if (zoneVal) zoneVal.style.color = ZONE_COLORS[s.zone] || ZONE_COLORS.unknown;
     }
+    const shipItem = makeMetaItem('Number of Ships', plannedShips.length ? plannedShipCount.join(', ') : '—', 'sc-salvage-shipn');
+    const fuelItem = makeMetaItem('Fuel Cost', estimate?.fuel ?? '…', 'sc-salvage-fuel');
+    const timeItem = makeMetaItem('Travel Time', estimate?.time ?? '…', 'sc-salvage-time');
+    applyFuelDisplay(estimate, fuelItem.querySelector('.sc-salvage-meta-val'), timeItem.querySelector('.sc-salvage-meta-val'));
+    const shipValue = shipItem.querySelector('.sc-salvage-meta-val');
+    if (shipValue) shipValue.title = plannedShips.length ? plannedNames.join(', ') : '';
     meta.append(
       systemItem,
       zoneItem,
       makeMetaItem('Resources left', breakdown || '—', 'sc-salvage-breakdown'),
       makeMetaItem('Total', (s.total || 0).toLocaleString()),
-      makeMetaItem('Number of Ships', '…', 'sc-salvage-shipn'),
-      makeMetaItem('Fuel Cost', '…', 'sc-salvage-fuel'),
-      makeMetaItem('Travel Time', '…', 'sc-salvage-time'),
+      shipItem,
+      fuelItem,
+      timeItem,
       makeMetaItem('Expires in', s.expires ? fmtCountdown(new Date(s.expires) - now) : '—', 'sc-salvage-timer'),
     );
 
@@ -1707,58 +1780,44 @@ let salvageFuelGen = 0;
 async function computeSalvageFuel() {
   const gen = ++salvageFuelGen;
   const planetId = Number(document.getElementById('sc-planet').value);
-  const sel = q => () => document.querySelectorAll(`#sc-salvage-list .${q}`);
-  const fuelCells = sel('sc-salvage-fuel');
-  const shipCells = sel('sc-salvage-shipn');
-  const timeCells = sel('sc-salvage-time');
   const cargo = selectedCargo();
   if (!cargo.length) {
-    fuelCells().forEach(c => { c.textContent = '—'; c.title = 'Select cargo ships above'; });
-    shipCells().forEach(c => { c.textContent = '—'; c.title = ''; });
-    timeCells().forEach(c => { c.textContent = '—'; });
+    document.querySelectorAll('#sc-salvage-list .sc-salvage-card').forEach(card => {
+      rememberFuelDisplay(card.dataset.fuelKey, { error: 'Select cargo ships above' },
+        card.querySelector('.sc-salvage-fuel'), card.querySelector('.sc-salvage-time'));
+    });
     return;
   }
-  const nameOf = id => (scCargoShips.find(c => c.shipDefId === id) || {}).name || '#' + id;
   let availability;
   for (const tr of document.querySelectorAll('#sc-salvage-list .sc-salvage-card')) {
     if (gen !== salvageFuelGen) return;
     const ships = planFleet(Number(tr.dataset.total) || 0, cargo);
-    const named = ships.map(s => `${s.quantity}× ${nameOf(s.shipDefId)}`).join(', ');
-    const shortNamed = ships.map(s => `${s.quantity}× ${shipShortName(nameOf(s.shipDefId))}`).join(', ');
-    const nCell = tr.querySelector('.sc-salvage-shipn');
-    if (nCell) {
-      nCell.textContent = ships.length ? shortNamed : '—';
-      nCell.title = ships.length ? named : '';
-    }
-
     const cell = tr.querySelector('.sc-salvage-fuel');
     const timeCell = tr.querySelector('.sc-salvage-time');
     const sysId = Number(tr.dataset.system);
     if (!cell || !sysId) continue;
-    if (!ships.length) { cell.textContent = '—'; if (timeCell) timeCell.textContent = '—'; continue; }
+    if (!ships.length) {
+      rememberFuelDisplay(tr.dataset.fuelKey, { error: 'No selected cargo ships can carry this field.' }, cell, timeCell);
+      continue;
+    }
     if (!availability) {
       availability = await browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId });
       if (gen !== salvageFuelGen) return;
     }
     const av = availability;
     if (av.error) {
-      cell.textContent = '—'; cell.title = av.error;
-      if (timeCell) timeCell.textContent = '—';
+      rememberFuelDisplay(tr.dataset.fuelKey, { error: av.error }, cell, timeCell);
       continue;
     }
     const capped = capShipsToAvailable(ships, av.available).ships;
     if (!capped.length) {
-      cell.textContent = '—'; cell.title = 'None of the selected cargo ships are on this planet.';
-      if (timeCell) timeCell.textContent = '—';
+      rememberFuelDisplay(tr.dataset.fuelKey, { error: 'None of the selected cargo ships are on this planet.' }, cell, timeCell);
       continue;
     }
+    if (hasFuelDisplayForFleet(tr.dataset.fuelKey, capped)) continue;
     const est = await fuelEstimate(planetId, sysId, capped, 'collect_salvage');
     if (gen !== salvageFuelGen) return;
-    if (est.error) { cell.textContent = '—'; cell.title = est.error; if (timeCell) timeCell.textContent = '—'; continue; }
-    cell.textContent = `${est.fuelCost}`;
-    cell.style.color = est.inRange === false ? '#ff7b72' : '';
-    cell.title = est.inRange === false ? 'Out of range' : `distance ${est.distance.toFixed(1)} ly`;
-    if (timeCell) timeCell.textContent = est.travelTime != null ? fmtCountdown(est.travelTime * 1000) : '—';
+    rememberFuelDisplay(tr.dataset.fuelKey, est, cell, timeCell, capped);
   }
 }
 

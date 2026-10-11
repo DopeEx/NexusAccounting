@@ -26,6 +26,7 @@ export async function loadAll() {
   const activeServer = await globalThis.nexusStorage?.getActiveServer?.() || { key: 's0' };
   const serverSelect = document.getElementById('server-select');
   if (serverSelect) {
+    await populateServerOptions(serverSelect, activeServer);
     serverSelect.value = activeServer.key || 's0';
   }
 
@@ -50,6 +51,36 @@ export async function loadAll() {
   updateStatus(store.last_scrape, store.last_error);
   renderAll();
   updateStorageFooter();
+}
+
+async function populateServerOptions(select, activeServer) {
+  let universes = [];
+  try {
+    universes = await browser.runtime.sendMessage({ type: 'GET_UNIVERSES' });
+  } catch (error) {
+    console.warn('[NexusAccounting] Could not load the universe list:', error.message);
+  }
+  if (!Array.isArray(universes) || !universes.length) return;
+
+  const options = new Map(
+    [...(select.options || [])].map(option => [option.value, option.textContent]),
+  );
+  for (const universe of universes) {
+    if (typeof universe?.key === 'string') {
+      options.set(universe.key, universe.name || universe.key.toUpperCase());
+    }
+  }
+  if (!options.has(activeServer.key)) {
+    options.set(activeServer.key, activeServer.name || activeServer.key.toUpperCase());
+  }
+
+  select.textContent = '';
+  for (const [key, name] of options) {
+    const option = document.createElement('option');
+    option.value = key;
+    option.textContent = name;
+    select.appendChild(option);
+  }
 }
 
 // Archived record counts + rough storage size, shown in the footer.
