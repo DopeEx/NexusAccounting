@@ -188,10 +188,17 @@ rt.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ error: m, ...meta });
     } else {
       let data = {};
-      try { data = JSON.parse(text); } catch { /* empty/non-JSON ok */ }
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          sendResponse({ error: `Failed to parse API response: ${e.message}`, parseError: true, ...meta });
+          return;
+        }
+      }
       sendResponse({ ok: true, data, ...meta });
     }
-  }).catch(e => sendResponse({ error: e.message }));
+  }).catch(e => sendResponse({ error: e.message, networkError: true }));
   return true;   // keep the channel open for the async sendResponse
 });
 
