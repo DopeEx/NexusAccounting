@@ -641,17 +641,16 @@ async function refreshSlots() {
 }
 
 function applyMissionMarkers() {
-  const missionsBySystem = new Map();
+  const missionsByField = new Map();
   for (const mission of afMissions) {
-    if (mission.missionType !== 'mine' || !mission.targetSystemId) continue;
-    const missions = missionsBySystem.get(mission.targetSystemId) || [];
+    if (mission.missionType !== 'mine' || mission.targetFieldId == null) continue;
+    const missions = missionsByField.get(mission.targetFieldId) || [];
     missions.push(mission);
-    missionsBySystem.set(mission.targetSystemId, missions);
+    missionsByField.set(mission.targetFieldId, missions);
   }
 
   for (const row of document.querySelectorAll('#af-results-tbody tr')) {
-    const systemId = Number(row.dataset.system);
-    const missions = missionsBySystem.get(systemId) || [];
+    const missions = missionsByField.get(Number(row.dataset.field)) || [];
     if (!missions.length) continue;
     row.style.borderLeft = '3px solid #f0883e';
     const systemCell = row.children[1];
@@ -730,6 +729,7 @@ export function renderAsteroids() {
   for (const f of pageRows) {
     const tr = document.createElement('tr');
     tr.dataset.system = f.systemId;
+    tr.dataset.field = f.fieldId;
     if ((afMyUsername && f.minerPresent === afMyUsername) || afMiningFieldIds.has(f.fieldId)) {
       tr.style.background = 'rgba(63,185,80,0.15)';   // already mining / claimed by us
     }
