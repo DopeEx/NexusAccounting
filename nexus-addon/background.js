@@ -369,7 +369,8 @@ const handleRuntimeMessage = async (msg, context = null) => {
       ships: msg.ships, miningDuration: msg.miningDuration,
       hangarAssignments: {},
       mineUntilFull: !!msg.mineUntilFull,
-      ...(escortRetreatThreshold != null ? { escortRetreatThreshold } : {}),
+      // The game stores/accepts the threshold as a fraction (0.5), not a percent (50).
+      ...(escortRetreatThreshold != null ? { escortRetreatThreshold: escortRetreatThreshold / 100 } : {}),
     });
   }
   if (msg.type === 'SEND_SURVEY') {

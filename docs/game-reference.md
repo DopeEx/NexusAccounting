@@ -25,7 +25,7 @@ shapes, see the [API integration reference](./api-reference.md).
 - `targetFieldType`: ore, hydrogen, plasma, cryo_ice (null for non-mining)
 - `miningEfficiencyPercent`: 0-100+ efficiency at dispatch
 - `mineUntilFull`: Optional dispatch flag; mines past the usual 10 cycles until the hold is full or the field is depleted
-- `escortRetreatThreshold`: Optional combat-escort retreat threshold. When escort damage exceeds the selected threshold, the fleet returns early and mining stops; pirates may still steal cargo. The game UI offers 30%, 50%, and 70% thresholds.
+- `escortRetreatThreshold`: Optional combat-escort retreat threshold. When escort damage exceeds the selected threshold, the fleet returns early and mining stops; pirates may still steal cargo. The game UI offers 30%, 50%, and 70% thresholds. The request body takes a fraction (`0.3`, `0.5`, `0.7`); missions echo it as `cargo._escortRetreatThreshold`.
 - `patrolCoverage`: Coverage percentage for patrol missions
 - `isProbeFleet`: Boolean flag
 - `maxFleetSlots`: Total simultaneous active fleets allowed
