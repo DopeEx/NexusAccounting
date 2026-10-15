@@ -600,6 +600,7 @@ async function sendMineMission(f) {
     avail, seed, recShips, miningShipIds, excavatorShipDefId: excavator ? excavator.shipDefId : null,
     excavatorBonus: EXCAVATOR_BONUS, escortTemplates, autoEscortTemplate, untilFullState,
     escortRetreatThresholdState,
+    refreshAvailability: () => browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId }),
   });
   if (!ships || !ships.length) return;   // cancelled or emptied
   localStorage.setItem('nx-af-until-full', untilFullState.untilFull ? '1' : '0');
