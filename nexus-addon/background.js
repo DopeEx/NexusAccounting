@@ -199,7 +199,7 @@ browser.alarms.onAlarm.addListener(async alarm => {
 // matches the saved filter. Mirrors tabs/asteroids.js scan(), API-only.
 const LS_ALARM = 'nexus-livesearch';
 const LS_INTERVAL_MIN = 5;
-const LS_REQ_DELAY_MS = 40;            // polite spacing between API calls
+const LS_REQ_DELAY_MS = 80;            // polite spacing between API calls
 const LS_ABORT_AFTER_ERRORS = 6;       // bail the scan after this many consecutive API failures
 const lsSectorCache = new Map();       // sectorId → { at, systems }, reused across scans
 const LS_SECTOR_TTL = 15 * 60 * 1000;
@@ -243,38 +243,80 @@ function fieldMatches(f, cfg) {
   return true;
 }
 
+let lsScanning = false;
+let lsRerun = false;
+
+// Progress/result of the latest scan, shown in the Asteroids tab.
+function setLsStatus(status) {
+  return browser.storage.local.set({ live_search_status: { ...status, at: Date.now() } }).catch(() => {});
+}
+
 async function liveSearchScan() {
+  if (lsScanning) { lsRerun = true; return; }   // config changed or alarm overlapped: rerun afterwards
+  lsScanning = true;
+  try {
+    do {
+      lsRerun = false;
+      await runLiveSearchScan();
+    } while (lsRerun);
+  } finally {
+    lsScanning = false;
+  }
+}
+
+async function runLiveSearchScan() {
   const { live_search: cfg } = await browser.storage.local.get('live_search');
   if (!cfg || !cfg.enabled || cfg.planetId == null) return;
 
   try {
+    await setLsStatus({ state: 'scanning', phase: 'Loading galaxy map…', scanned: 0, limit: 0, matchingSystems: 0, found: 0 });
     const planets = (await getPlanets()).planets || [];
     const planet = planets.find(p => p.id === cfg.planetId);
-    if (!planet || planet.systemId == null) return;
+    if (!planet || planet.systemId == null) { await setLsStatus({ state: 'error', error: 'Source planet not found.' }); return; }
     const map = await apiFetch('/api/galaxy/map', { polite: true });
     const src = (map.systems || []).find(s => s.id === planet.systemId);
-    if (!src) return;
+    if (!src) { await setLsStatus({ state: 'error', error: 'Source system not on the map.' }); return; }
 
     const want = Math.max(1, Math.min(500, cfg.near || 25));
-    const targets = (map.systems || [])
+    const candidates = (map.systems || [])
       .filter(s => s.id !== src.id && (s.visibility === 'full' || s.visibility === 'partial'))
       .map(s => ({ s, d: Math.hypot(s.x - src.x, s.y - src.y) }))
       .sort((a, b) => a.d - b.d)
-      .slice(0, want)
       .map(o => o.s);
 
+    // Same targeting as the manual scan: zones narrow the systems first, and
+    // with a type filter the scan continues (up to 500 systems) until `want`
+    // systems actually contain that type.
+    const typeSet = new Set(cfg.types || []);
+    const zoneSet = new Set(cfg.zones || []);
+    const systemLimit = typeSet.size ? 500 : want;
     const matches = [];
     let errStreak = 0;
-    for (const sys of targets) {
+    let inZone = 0, scanned = 0, matchingSystems = 0;
+    const report = (phase) => setLsStatus({ state: 'scanning', phase, scanned, limit: systemLimit, matchingSystems, found: matches.length });
+    await report('Scanning systems…');
+    for (const sys of candidates) {
+      if (typeSet.size ? (matchingSystems >= want || scanned >= systemLimit) : inZone >= want) break;
       let sector;
       try { sector = await lsSectorSystems(sys.sectorId); }
       catch { if (++errStreak >= LS_ABORT_AFTER_ERRORS) break; continue; }
       const meta = sector.find(s => s.id === sys.id);
-      if (!meta || !meta.planetCount) { errStreak = 0; continue; }
+      if (!meta || (zoneSet.size && !zoneSet.has(meta.securityZone))) { errStreak = 0; continue; }
+      inZone++;
+      if (!meta.planetCount) { errStreak = 0; continue; }
       let data;
       try { data = await apiFetch(`/api/galaxy/systems/${sys.id}/planets`, { polite: true }); }
       catch { if (++errStreak >= LS_ABORT_AFTER_ERRORS) break; continue; }
       errStreak = 0;
+      scanned++;
+      if (scanned % 5 === 0) report('Scanning systems…');
+      if (typeSet.size) {
+        if (!(data.asteroidFields || []).some(f => typeSet.has(f.fieldType))) {
+          await new Promise(r => setTimeout(r, LS_REQ_DELAY_MS));
+          continue;
+        }
+        matchingSystems++;
+      }
       for (const f of (data.asteroidFields || [])) {
         const zone = meta.securityZone || 'unknown';
         if (fieldMatches({ ...f, zone }, cfg)) {
@@ -303,6 +345,12 @@ async function liveSearchScan() {
       live_search_seen: matches.map(m => m.id),
       live_search_last_matches: matches,
       live_search_last_at: Date.now(),
+    });
+
+    await setLsStatus({
+      state: errStreak >= LS_ABORT_AFTER_ERRORS ? 'error' : 'idle',
+      error: errStreak >= LS_ABORT_AFTER_ERRORS ? 'Scan aborted after repeated API errors.' : null,
+      scanned, matchingSystems, found: matches.length, fresh: fresh.length,
     });
 
     if (fresh.length) {
@@ -402,6 +450,17 @@ const handleRuntimeMessage = async (msg, context = null) => {
   if (msg.type === 'SEND_XENO_SURVEY') {
     return gamePost('/api/fleet/xeno-survey', {
       sourcePlanetId: msg.sourcePlanetId, targetMoonId: msg.targetMoonId, ships: msg.ships,
+  if (msg.type === 'SEND_SCOUT_CAMP') {
+    return gamePost('/api/fleet/scout-camp', {
+      sourcePlanetId: msg.sourcePlanetId, campId: msg.campId, ships: msg.ships,
+    });
+  }
+  if (msg.type === 'SEND_ATTACK_PIRATES') {
+    return gamePost('/api/fleet/attack-pirates', {
+      sourcePlanetId: msg.sourcePlanetId, campId: msg.campId, ships: msg.ships,
+      hangarAssignments: {},
+    });
+  }
       hangarAssignments: {},
     });
   }
