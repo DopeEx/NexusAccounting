@@ -4,6 +4,32 @@ All notable changes to the Nexus Overseer Firefox addon (formerly Nexus Accounti
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.0.0] - 2026-10-15
+
+### Important
+- Nexus Overseer is now an independent project. Because of the rename, an
+  existing installation may start with an empty data store. **Before
+  updating, export your data (**Export JSON** in the dashboard header) and import it again after
+  the update.** Backups made with earlier versions can be imported.
+
+### Added
+- A **Pirates** tab with pirate camp cards, scouting, attacks and an attack
+  planner that uses the combat simulator.
+- Expedition cards now show the target zone, depth, fleet size and a
+  progress bar like the Scouting tab.
+- Live Search shows what it is doing: scan progress, the time of the last
+  scan, the number of matches and when the next scan runs.
+
+### Changed
+- Live Search now selects systems the same way as the manual scan, so the same
+  filters give the same results.
+
+### Fixed
+- Expedition progress is shown correctly while the fleet is exploring.
+- Requests are paused for all callers after a "Too Many Requests" response.
+- The "Live Search Belts" window reports a stale page after an add-on reload
+  instead of failing silently.
+
 ## [1.9.1] - 2026-10-11
 
 ### Fixed

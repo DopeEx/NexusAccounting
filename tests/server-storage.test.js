@@ -19,11 +19,11 @@ test('manifest requests tabs permission for active-game detection', () => {
   assert.ok(manifest.permissions.includes('tabs'), 'manifest includes tabs permission for active game tab detection');
 });
 
-test('manifest uses MV3 service worker background without legacy scripts key', () => {
+test('manifest declares service worker plus scripts fallback for Firefox', () => {
   const manifest = JSON.parse(fs.readFileSync(new URL('../nexus-addon/manifest.json', import.meta.url), 'utf8'));
   assert.equal(manifest.manifest_version, 3, 'manifest version is MV3');
   assert.equal(manifest.background?.service_worker, 'background-sw.js', 'service worker is configured');
-  assert.equal(Object.hasOwn(manifest.background || {}, 'scripts'), false, 'legacy background.scripts key is absent');
+  assert.deepEqual(manifest.background?.scripts, ['background-sw.js'], 'Firefox loads the same entry via background.scripts');
 });
 
 test('server storage isolates NX-S0 from NX-NF', async () => {

@@ -519,7 +519,7 @@ document.getElementById('btn-export').addEventListener('click', async function (
   // JSON cannot represent Infinity (unlimited records cap) — store as 0.
   if (data.records_cap === Infinity) data.records_cap = 0;
   const payload = {
-    nexus_accounting_backup: 1,
+    nexus_overseer_backup: 1,
     exported_at: new Date().toISOString(),
     data,
   };
@@ -578,7 +578,9 @@ document.getElementById('import-file').addEventListener('change', async function
   const btn = document.getElementById('btn-import');
   try {
     const payload = JSON.parse(await file.text());
-    if (!payload || payload.nexus_accounting_backup !== 1 || !payload.data || Array.isArray(payload.data) || typeof payload.data !== 'object') {
+    // `nexus_accounting_backup` is the marker written before the rename.
+    const isBackup = payload && (payload.nexus_overseer_backup === 1 || payload.nexus_accounting_backup === 1);
+    if (!isBackup || !payload.data || Array.isArray(payload.data) || typeof payload.data !== 'object') {
       throw new Error('not a Nexus Overseer backup file');
     }
     validateBackupData(payload.data);
