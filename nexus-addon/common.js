@@ -120,7 +120,7 @@ export async function confirmDialog(message, ships) {
 export async function editFleetDialog({
   title, subtitle = '', avail = {}, seed = {}, recShips = [], miningShipIds = null,
   excavatorShipDefId = null, excavatorBonus = 1.2, escortTemplates = [], autoEscortTemplate = null, untilFullState = null,
-  escortRetreatThresholdState = null, refreshAvailability = null,
+  escortRetreatThresholdState = null, refreshAvailability = null, planner = null,
 }) {
   const defs = await shipDefs();
   const ids = [...new Set([
@@ -342,6 +342,49 @@ export async function editFleetDialog({
       inputs.set(id, inp);
     }
     box.append(rows);
+    if (planner) {
+      const planRow = document.createElement('div');
+      planRow.style.cssText = 'margin-top:10px;display:flex;align-items:center;gap:10px';
+      const planBtn = document.createElement('button');
+      planBtn.type = 'button';
+      planBtn.textContent = planner.label || 'Calculate fleet';
+      planBtn.style.cssText = 'padding:5px 12px;border-radius:6px;border:1px solid #39405a;background:#2a3146;color:#e6e8ee;cursor:pointer;font-size:0.82rem';
+      const planMsg = document.createElement('span');
+      planMsg.style.cssText = 'color:#8b949e;font-size:0.82rem;white-space:pre-line';
+      planBtn.onclick = async () => {
+        planBtn.disabled = true;
+        planBtn.style.opacity = '0.5';
+        planMsg.textContent = 'Calculating…';
+        try {
+          const r = await planner.run();
+          if (r.error) {
+            planMsg.textContent = r.error;
+          } else {
+            for (const id of [...state.keys()]) {
+              state.delete(id);
+              const input = inputs.get(id);
+              if (input) input.value = '0';
+            }
+            for (const [idString, quantity] of Object.entries(r.ships || {})) {
+              const id = Number(idString);
+              const q = Math.min(quantity, avail[id] || 0);
+              if (q <= 0) continue;
+              state.set(id, q);
+              const input = inputs.get(id);
+              if (input) input.value = String(q);
+            }
+            planMsg.textContent = r.note || '';
+            refresh();
+          }
+        } catch (error) {
+          planMsg.textContent = error.message || String(error);
+        }
+        planBtn.disabled = false;
+        planBtn.style.opacity = '1';
+      };
+      planRow.append(planBtn, planMsg);
+      box.append(planRow);
+    }
     if (escortTemplates.length) {
       const escortSection = document.createElement('div');
       escortSection.style.cssText = 'margin-top:10px;padding-top:8px;border-top:1px solid #30363d;';
@@ -633,10 +676,16 @@ export async function rememberedSelections() {
   const { template_selections } = await browser.storage.local.get('template_selections');
   return template_selections || {};
 }
-export async function rememberSelection(id, value) {
-  const cur = await rememberedSelections();
-  cur[id] = value;
-  await browser.storage.local.set({ template_selections: cur });
+let rememberQueue = Promise.resolve();
+export function rememberSelection(id, value) {
+  // Serialized: concurrent read-modify-write calls would otherwise overwrite each other.
+  const run = rememberQueue.then(async () => {
+    const cur = await rememberedSelections();
+    cur[id] = value;
+    await browser.storage.local.set({ template_selections: cur });
+  });
+  rememberQueue = run.catch(() => {});
+  return run;
 }
 
 export function fmt(n) {
@@ -658,10 +707,12 @@ export function fmtCountdown(ms) {
 
 const MISSION_WORK_LABEL = { survey: 'Surveying', investigate: 'Investigating',
   collect_debris: 'Collecting', collect_salvage: 'Collecting', expedition: 'Exploring',
-  xeno_survey: 'Surveying ruins', mine: 'Mining', raid: 'Raiding', patrol: 'Patrolling' };
+  xeno_survey: 'Surveying ruins', mine: 'Mining', raid: 'Raiding', patrol: 'Patrolling',
+  scout_camp: 'Scouting', attack_pirates: 'Attacking' };
 const MISSION_WORK_COLOR = {
   survey: '#3ec6ff', investigate: '#60a5fa', collect_debris: '#2dd4bf',
   collect_salvage: '#9b6cff', expedition: '#f0883e', xeno_survey: '#bc8cff',
+  scout_camp: '#e3b341', attack_pirates: '#f85149',
 };
 const MISSION_WORK_GRADIENT = {
   survey: 'linear-gradient(90deg, #3ec6ff 0%, #7f77ff 100%)',
@@ -690,7 +741,14 @@ export function missionProgress(m) {
   const rdep = g('returnDepartsAt'), rarr = g('returnArrivesAt');
   const work = MISSION_WORK_LABEL[m.missionType] || 'Working';
   const stages = [];
-  if (dep && arr) stages.push(['Outbound', MISSION_STAGE_COLOR.outbound, MISSION_STAGE_GRADIENT.outbound, dep, arr]);
+  // An exploring expedition reports the end of the exploration in `arrivesAt`;
+  // the actual arrival is departure + travelTime.
+  const travelMs = Number(m.travelTime) * 1000;
+  if (m.status === 'exploring' && dep && arr && travelMs > 0 && dep + travelMs < arr) {
+    const landed = dep + travelMs;
+    stages.push(['Outbound', MISSION_STAGE_COLOR.outbound, MISSION_STAGE_GRADIENT.outbound, dep, landed]);
+    stages.push([work, MISSION_WORK_COLOR[m.missionType] || '#47d4ff', MISSION_WORK_GRADIENT[m.missionType], landed, arr]);
+  } else if (dep && arr) stages.push(['Outbound', MISSION_STAGE_COLOR.outbound, MISSION_STAGE_GRADIENT.outbound, dep, arr]);
   if (arr && rdep) stages.push([work, MISSION_WORK_COLOR[m.missionType] || '#47d4ff', MISSION_WORK_GRADIENT[m.missionType], arr, rdep]);
   if (rdep && rarr) stages.push(['Returning', MISSION_STAGE_COLOR.returning, MISSION_STAGE_GRADIENT.returning, rdep, rarr]);
   for (const [label, color, gradient, s, e] of stages) {

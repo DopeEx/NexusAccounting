@@ -62,8 +62,18 @@ function makeDraggable(el, handle) {
   });
 }
 
+function openFieldsPanelSafe() {
+  openFieldsPanel().catch(err => {
+    console.warn('[NexusOverseer] Could not open live-search window:', err);
+    if (fieldsPanel) { fieldsPanel.remove(); fieldsPanel = null; }
+    window.alert(/context invalidated/i.test(String(err && err.message))
+      ? 'The NexusOverseer extension was reloaded. Please reload this page (Ctrl+F5) and try again.'
+      : `Could not open the live-search window: ${err && err.message || err}`);
+  });
+}
+
 document.addEventListener('click', e => {
-  if (e.target.closest('[data-nexus-lsbelts]')) { e.preventDefault(); openFieldsPanel(); }
+  if (e.target.closest('[data-nexus-lsbelts]')) { e.preventDefault(); openFieldsPanelSafe(); }
 });
 
 function inject() {
@@ -324,7 +334,10 @@ async function openFieldsPanel() {
   await refreshMiningFieldIds();
   const miningRefreshTimer = setInterval(() => {
     if (!panel.isConnected) { clearInterval(miningRefreshTimer); return; }
-    refreshMiningFieldIds().then(renderRows);
+    refreshMiningFieldIds().then(renderRows).catch(() => {
+      // Extension was reloaded: this script is orphaned, stop polling.
+      clearInterval(miningRefreshTimer);
+    });
   }, 10000);
 
   // Recommended fleet for a match, capped to planet availability: [{shipDefId, quantity}].
@@ -579,7 +592,9 @@ async function openFieldsPanel() {
 
   picker.addEventListener('change', () => {
     tpl = templates.find(t => String(t.id) === picker.value) || null;
-    ext.storage.local.set({ template_selections: { ...(template_selections || {}), 'af-template-select': picker.value } });
+    ext.storage.local.get('template_selections').then(({ template_selections: current }) => ext.storage.local.set({
+      template_selections: { ...(current || {}), 'af-template-select': picker.value },
+    }));
     seedFromTemplate(tpl);
     buildEditor();
     renderRows();

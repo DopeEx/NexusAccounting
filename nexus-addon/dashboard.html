@@ -12,20 +12,21 @@
   <nav class="tabs">
     <button class="tab main-tab active" data-tab="statistics">Statistics</button>
     <button class="tab main-tab expert-only" data-tab="scouting">Scouting</button>
-    <button class="tab main-tab" data-tab="asteroids">Asteroids Fields</button>
+    <button class="tab main-tab" data-tab="asteroids">Asteroids</button>
     <button class="tab main-tab expert-only" data-tab="expeditions">Expeditions</button>
+    <button class="tab main-tab" data-tab="pirates">Pirates</button>
     <button class="tab main-tab expert-only" data-tab="xeno">Xeno</button>
-    <button class="tab main-tab" data-tab="fleets">Fleet Templates</button>
+    <button class="tab main-tab" data-tab="fleets">Fleets</button>
     <button class="tab main-tab" data-tab="finder">Galaxy Scout</button>
     <button class="tab main-tab" data-tab="market">Market</button>
     <button class="tab main-tab" data-tab="techtree">Tech Tree</button>
-    <button class="tab main-tab" data-tab="simulator">Combat Simulator</button>
+    <button class="tab main-tab" data-tab="simulator">Simulator</button>
   </nav>
 
   <div class="subtabs show">
     <button class="tab subtab active" data-tab="global">Global</button>
     <button class="tab subtab" data-tab="surveys">Surveys</button>
-    <button class="tab subtab" data-tab="pirates">Pirates</button>
+    <button class="tab subtab" data-tab="pirates-stats">Pirates</button>
     <button class="tab subtab" data-tab="mining">Mining</button>
     <button class="tab subtab" data-tab="battles">Battles</button>
     <button class="tab subtab" data-tab="debris">Debris</button>
@@ -207,7 +208,80 @@
     </div>
   </div>
 
-  <div id="pirates-content" class="statistics-dashboard statistics-split-layout" style="display:none;">
+  <div id="pirates-content" class="pirates-dashboard statistics-split-layout" style="display:none;">
+    <div class="toolbar-panel scouting-toolbar-panel">
+      <div class="toolbar-row toolbar-row-main">
+        <label class="toolbar-field">
+          <span class="toolbar-label">Send From</span>
+          <select id="pc-planet" class="toolbar-select"></select>
+        </label>
+        <label class="toolbar-field">
+          <span class="toolbar-label">Scout template</span>
+          <select id="pc-scout-template" class="toolbar-select"></select>
+        </label>
+      </div>
+      <div class="toolbar-row toolbar-row-meta">
+        <span id="pc-status" class="toolbar-meta-text"></span>
+      </div>
+    </div>
+    <div class="reports-section mission-panel">
+      <div class="reports-header">
+        <h2>Pirate camps</h2>
+        <span id="pc-count" class="mission-count"></span>
+        <button id="pc-refresh" class="toolbar-button secondary-button">Refresh</button>
+      </div>
+      <div class="panel-toolbar expert-only pc-auto-box">
+        <div class="pc-auto-row">
+          <input type="checkbox" id="pc-auto" class="m-switch" title="Automate camp scouting">
+          <span class="panel-toolbar-label">Automate Scouting</span>
+          <label class="panel-toolbar-field" title="Maximum number of scouting fleets in flight">Max fleets
+            <input type="number" id="pc-max-scout" class="panel-toolbar-input" min="1" step="1" value="1">
+          </label>
+          <span id="pc-auto-status" class="panel-toolbar-status">Status: -</span>
+        </div>
+        <div class="pc-auto-row">
+          <input type="checkbox" id="pc-auto-attack" class="m-switch" title="Automate camp attacks">
+          <span class="panel-toolbar-label">Automate Attacks</span>
+          <label class="panel-toolbar-field" title="Maximum number of attack fleets in flight">Max fleets
+            <input type="number" id="pc-max-attack" class="panel-toolbar-input" min="1" step="1" value="1">
+          </label>
+          <label class="panel-toolbar-field" title="Switch automation off once this many ships were lost since it was enabled (any lost attack also stops it)">Stop at losses
+            <input type="number" id="pc-loss-limit" class="panel-toolbar-input" min="1" step="1" value="3">
+          </label>
+          <span id="pc-attack-status" class="panel-toolbar-status">Status: -</span>
+        </div>
+      </div>
+      <div id="pc-list" class="sc-debris-list"></div>
+    </div>
+
+    <div class="reports-section mission-panel">
+      <div class="reports-header">
+        <h2>Pirate reports</h2>
+        <span id="pr-count" class="mission-count"></span>
+      </div>
+      <div>
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Camp</th>
+              <th>Result</th>
+              <th>Rounds</th>
+              <th>Sent</th>
+              <th>Pirates</th>
+              <th>Own losses</th>
+              <th>Pirate losses</th>
+              <th>Loot</th>
+              <th>Debris</th>
+            </tr>
+          </thead>
+          <tbody id="pr-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="pirates-stats-content" class="statistics-dashboard statistics-split-layout" style="display:none;">
     <section class="statistics-summary-panel">
     <div class="section-label">Loot collected</div>
     <div class="stats" id="p-stats-collected"></div>
@@ -473,6 +547,13 @@
       <div class="reports-header">
         <h2>Expedition fleets in transit</h2>
         <span id="e-transit-count" class="mission-count"></span>
+      </div>
+      <div class="panel-toolbar expert-only pc-auto-box">
+        <div class="pc-auto-row">
+          <input type="checkbox" id="e-auto" class="m-switch" title="Automatically relaunch expeditions with the settings above">
+          <span class="panel-toolbar-label">Automate Expeditions</span>
+          <span id="e-auto-status" class="panel-toolbar-status">Status: -</span>
+        </div>
       </div>
       <div id="e-transit-list" class="sc-transit-list"></div>
     </div>

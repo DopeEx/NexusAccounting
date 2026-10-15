@@ -2,7 +2,7 @@
 // both kinds share one background store (exp_*), tagged per-record by `kind`.
 
 import { loadFleetTemplates } from './fleets.js';
-import { RESOURCE_SERIES, appendExtraResourceCards, applySort, attachSortable, clearAvailStrip, computeRawLossCost, computeSeries, editFleetDialog, fillResourceCards, filterZone, fmt, fuelForMode, getLabelKey, getMode, inWindowRange, makeMissionBar, makeResourceDoughnut, makeResourceLineChart, makeStatCard, periodLabelFor, renderAvailStrip, renderPagedTable, rememberSelection, rememberedSelections, store, windowActive, zeroCell, zoneCell, setStatusText } from '../common.js';
+import { RESOURCE_SERIES, appendExtraResourceCards, applySort, attachSortable, clearAvailStrip, computeRawLossCost, computeSeries, editFleetDialog, fillResourceCards, filterZone, fmt, fmtCountdown, fuelForMode, getLabelKey, getMode, inWindowRange, missionProgress, makeResourceDoughnut, makeResourceLineChart, makeStatCard, periodLabelFor, renderAvailStrip, renderPagedTable, rememberSelection, rememberedSelections, store, windowActive, zeroCell, zoneCell, setStatusText } from '../common.js';
 
 export let chartExpeditions, chartExpComp;
 
@@ -26,9 +26,21 @@ const DEPTH_RANGE = {
 };
 
 let eLaunchInited = false;
+let eInitPromise = null;
 let ePlanets = [];    // [{ id, name, isHomeworld }]
 let eTemplates = [];
 let eAllShips = [];   // every ship def: [{ shipDefId, key, name, imageUrl }]
+
+export function initExpeditionsTab() {
+  if (!eInitPromise) {
+    eInitPromise = initExpeditionLaunch().catch(error => {
+      eInitPromise = null;
+      eLaunchInited = false;
+      throw error;
+    });
+  }
+  return eInitPromise;
+}
 
 async function initExpeditionLaunch() {
   if (eLaunchInited) return;
@@ -56,12 +68,20 @@ async function initExpeditionLaunch() {
   if (saved['e-launch-preset']) document.getElementById('e-launch-preset').value = saved['e-launch-preset'];
   if (saved['e-launch-zone']) document.getElementById('e-launch-zone').value = saved['e-launch-zone'];
 
+  const autoBox = document.getElementById('e-auto');
+  autoBox.checked = saved['e-auto'] === true;
+  autoBox.addEventListener('change', e => rememberSelection('e-auto', e.target.checked));
+
   await refreshExpeditionTemplates();
   browser.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes.fleet_templates) refreshExpeditionTemplates();
   });
 
   applyPresetToControls();
+  if (saved['e-launch-depth']) {
+    document.getElementById('e-launch-depth').value = saved['e-launch-depth'];
+    applyDepthRange();
+  }
   updateExpeditionAvail();
   refreshExpeditionMissions();
 
@@ -91,7 +111,10 @@ async function initExpeditionLaunch() {
     rememberSelection('e-launch-zone', e.target.value);
     applyDepthRange();
   });
-  document.getElementById('e-launch-depth').addEventListener('change', applyDepthRange);
+  document.getElementById('e-launch-depth').addEventListener('change', e => {
+    applyDepthRange();
+    rememberSelection('e-launch-depth', e.target.value);
+  });
   document.getElementById('e-launch-btn').addEventListener('click', launchExpedition);
 }
 
@@ -191,8 +214,64 @@ async function refreshExpeditionMissions() {
   if (mi.error) return;
   eMissions = (mi.missions || []).filter(m => m.missionType === 'expedition');
   const activeEl = document.getElementById('e-launch-active');
-  if (activeEl) activeEl.textContent = `${eMissions.length}/2 expeditions active`;
+  if (activeEl) activeEl.textContent = `${eMissions.length}/${MAX_EXPEDITION_SLOTS} expeditions active`;
   renderExpeditionTransit();
+}
+
+// Expeditions have their own slots, separate from the general fleet slots.
+const MAX_EXPEDITION_SLOTS = 2;
+let eAutoRunning = false;
+let eLastLaunch = { at: 0, count: 0 };
+
+export async function runExpeditionAutomations() {
+  if (!eInitPromise) return;
+  await eInitPromise.catch(() => {});
+  const box = document.getElementById('e-auto');
+  if (!box?.checked || eAutoRunning) return;
+  eAutoRunning = true;
+  const status = document.getElementById('e-auto-status');
+  try {
+    await refreshExpeditionMissions();
+    let active = eMissions.length;
+    // The missions list can lag behind a fresh launch; count it until it shows up.
+    if (Date.now() - eLastLaunch.at < 20_000 && active <= eLastLaunch.count) active = eLastLaunch.count + 1;
+    if (active >= MAX_EXPEDITION_SLOTS) {
+      setStatusText(status, `Waiting… ${active}/${MAX_EXPEDITION_SLOTS} expedition slots in use.`);
+      return;
+    }
+    const planetId = Number(document.getElementById('e-launch-planet').value);
+    if (!planetId) { setStatusText(status, 'Select a planet first.'); return; }
+    const zone = document.getElementById('e-launch-zone').value;
+    const [depthMin, depthMax] = DEPTH_RANGE[zone] || [1, 4];
+    const depth = Math.min(depthMax, Math.max(depthMin, parseInt(document.getElementById('e-launch-depth').value, 10) || depthMin));
+
+    const r = await resolveExpeditionShips(planetId);
+    if (r.error) { setStatusText(status, r.error, 'warning'); return; }
+    const missing = r.ships.some(s => s.quantity < (r.seed[s.shipDefId] || 0))
+      || Object.keys(r.seed).some(id => !r.ships.some(s => String(s.shipDefId) === id));
+    if (missing) { setStatusText(status, `Waiting for ships: "${r.name}" is not complete on this planet.`, 'warning'); return; }
+
+    const res = await browser.runtime.sendMessage({
+      type: 'SEND_EXPEDITION', sourcePlanetId: planetId, ships: r.ships, zone, depth,
+    });
+    if (res.error) {
+      if (String(res.error).includes('Human verification')) {
+        box.checked = false;
+        box.disabled = true;
+        rememberSelection('e-auto', false);
+        setStatusText(status, `Launch failed: ${res.error}`, 'error');
+      } else {
+        setStatusText(status, `Launch failed: ${res.error}`, 'warning');
+      }
+      return;
+    }
+    eLastLaunch = { at: Date.now(), count: eMissions.length };
+    setStatusText(status, `Expedition launched (${zone}, depth ${depth}) ✓`);
+    updateExpeditionAvail();
+    await refreshExpeditionMissions();
+  } finally {
+    eAutoRunning = false;
+  }
 }
 
 function renderExpeditionTransit() {
@@ -203,26 +282,79 @@ function renderExpeditionTransit() {
   document.getElementById('e-transit-count').textContent = `${eMissions.length} in flight`;
   if (!eMissions.length) {
     const d = document.createElement('div');
-    d.className = 'mission-empty-state';
+    d.className = 'sc-transit-empty';
     d.textContent = 'No expeditions in transit.';
     box.appendChild(d);
     return;
   }
   for (const m of eMissions) {
-    const target = m.targetSystemName || m.targetPlanetName || (m.zone ? `${m.zone} (depth ${m.depth ?? '?'})` : `#${m.id}`);
+    const exp = m.raidParams?.expedition || {};
+    const zone = exp.zone || m.zone;
+    const depth = exp.depth ?? m.depth;
+    const source = m.sourcePlanetName || m.sourceSystemName;
+    const zoneText = zone ? `${zone[0].toUpperCase()}${zone.slice(1)} zone` : `Expedition #${m.id}`;
+    const target = source ? `${source} → ${zoneText}` : zoneText;
+    const ships = (m.fleetComposition || []).reduce((n, s) => n + (s.quantity || 0), 0);
+    const details = [
+      depth != null ? `Depth ${depth}` : null,
+      ships ? `${ships} ships` : null,
+      m.cargo?._cargoCapacity ? `Cargo ${fmt(m.cargo._cargoCapacity)}` : null,
+    ].filter(Boolean).join(' · ');
+    const shipList = (m.fleetComposition || [])
+      .map(s => `${s.quantity}× ${s.shipName || s.shipKey || s.shipDefId}`).join('\n');
     const row = document.createElement('div');
-    row.className = 'mission-transit-row';
-    const head = document.createElement('div');
-    head.className = 'mission-transit-heading';
-    const name = document.createElement('span');
-    name.className = 'mission-transit-name';
-    name.textContent = target;
-    head.appendChild(name);
-    const bar = makeMissionBar(m);
-    bar.el.classList.add('mission-progress-compact');
-    row.append(head, bar.el);
+    row.className = 'sc-transit-card';
+
+    const main = document.createElement('div');
+    main.className = 'sc-mission-main sc-transit-main';
+    const left = document.createElement('div');
+    left.className = 'sc-transit-left';
+    const icon = document.createElement('span');
+    icon.className = 'sc-transit-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    const text = document.createElement('div');
+    text.className = 'sc-transit-text';
+    const title = document.createElement('div');
+    title.className = 'sc-transit-title';
+    title.textContent = target;
+    const meta = document.createElement('div');
+    meta.className = 'sc-transit-meta';
+    const status = document.createElement('span');
+    status.className = 'sc-transit-status';
+    meta.append(status);
+    if (details) {
+      const info = document.createElement('span');
+      info.className = 'sc-transit-status';
+      info.style.marginLeft = '10px';
+      info.style.color = '#8b93c9';
+      info.textContent = details;
+      info.title = shipList;
+      meta.append(info);
+    }
+    text.append(title, meta);
+    left.append(icon, text);
+    const eta = document.createElement('div');
+    eta.className = 'sc-transit-eta';
+    main.append(left, eta);
+
+    const track = document.createElement('div');
+    track.className = 'mission-progress-track sc-transit-track';
+    const fill = document.createElement('div');
+    fill.className = 'mission-progress-fill sc-transit-fill';
+    track.appendChild(fill);
+    row.append(main, track);
     box.appendChild(row);
-    eTicks.push(bar.upd);
+
+    const upd = () => {
+      const p = missionProgress(m);
+      fill.style.width = `${(p.frac * 100).toFixed(1)}%`;
+      fill.style.background = p.gradient || p.color;
+      status.textContent = p.label;
+      status.style.color = p.color;
+      eta.textContent = p.eta > 0 ? fmtCountdown(p.eta) : '—';
+    };
+    upd();
+    eTicks.push(upd);
   }
 }
 
@@ -286,7 +418,7 @@ export function getExpSeriesForMode(mode) {
 }
 
 export function renderExpeditionsTab() {
-  initExpeditionLaunch();
+  initExpeditionsTab();
 }
 
 export function renderExpeditionStatsTab() {

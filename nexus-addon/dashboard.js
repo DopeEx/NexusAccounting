@@ -8,7 +8,7 @@ import { activeTab, appendStatusText, confirmDialog, dayKey, fuelForMode, getLab
 import { bindServerSelector } from './server-switch.js';
 import { renderBattlesTab } from './tabs/battles.js';
 import { renderDebrisTab } from './tabs/debris.js';
-import { renderExpeditionStatsTab, renderExpeditionsTab, setExpPage } from './tabs/expeditions.js';
+import { initExpeditionsTab, renderExpeditionStatsTab, renderExpeditionsTab, runExpeditionAutomations, setExpPage } from './tabs/expeditions.js';
 import { renderWormholesTab, setWhPage } from './tabs/wormholes.js';
 import { initAsteroidsTab } from './tabs/asteroids.js';
 import { renderFleetsTab } from './tabs/fleets.js';
@@ -19,7 +19,7 @@ import { initMarketTab } from './tabs/market.js';
 import { registerAutomationTask, startAutomationScheduler } from './automation-scheduler.js';
 import { renderGlobalTab } from './tabs/global.js';
 import { renderMiningTab, setMiningPage } from './tabs/mining.js';
-import { renderPiratesTab, setPirateCurrentPage } from './tabs/pirates.js';
+import { initPiratesTab, renderPirateStatsTab, renderPiratesTab, runPirateAutomations, setPirateCurrentPage } from './tabs/pirates.js';
 import { getEventBreakdownForMode, getResourcesLostForMode, getSeriesForMode, getTotalsForMode, populateEventOptions, renderByEventChart, renderCollected, renderEventsChart, renderLost, renderResourceChart, renderTable, setCurrentPage } from './tabs/surveys.js';
 import { renderTechTreeTab } from './tabs/techtree.js';
 
@@ -147,6 +147,10 @@ export function renderAll() {
     renderPiratesTab();
     return;
   }
+  if (activeTab === 'pirates-stats') {
+    renderPirateStatsTab();
+    return;
+  }
   if (activeTab === 'mining') {
     renderMiningTab();
     return;
@@ -230,6 +234,7 @@ export const TAB_CONTENT = {
   global: 'global-content',
   surveys: 'main-content',
   pirates: 'pirates-content',
+  'pirates-stats': 'pirates-stats-content',
   mining: 'mining-content',
   battles: 'battles-content',
   debris: 'debris-content',
@@ -250,7 +255,7 @@ export const TAB_CONTENT = {
 const EXPERT_MODE_KEY = 'expert_mode_enabled';
 const EXPERT_TABS = new Set(['scouting', 'expeditions', 'xeno']);
 const HIDE_GLOBAL_CONTROLS_TABS = new Set([
-  'finder', 'asteroids', 'fleets', 'scouting', 'techtree', 'market', 'simulator', 'xeno',
+  'pirates', 'finder', 'asteroids', 'fleets', 'scouting', 'techtree', 'market', 'simulator', 'xeno',
 ]);
 let expertModeEnabled = false;
 
@@ -312,7 +317,7 @@ async function initExpertModeToggle() {
   });
 }
 
-const SUBTAB_TABS = ['global', 'surveys', 'pirates', 'mining', 'battles', 'debris', 'expeditions-stats', 'xeno-stats', 'wormholes'];
+const SUBTAB_TABS = ['global', 'surveys', 'pirates-stats', 'mining', 'battles', 'debris', 'expeditions-stats', 'xeno-stats', 'wormholes'];
 let activeMainTab = (activeTab === 'global' || SUBTAB_TABS.includes(activeTab)) ? 'statistics' : activeTab;
 
 function updateTabNavigation() {
@@ -624,14 +629,26 @@ positionControls();
 registerAutomationTask('scouting', () => {
   if (expertModeEnabled) return runScoutingAutomations();
 });
+registerAutomationTask('pirates', () => {
+  if (expertModeEnabled) return runPirateAutomations();
+});
+registerAutomationTask('expeditions', () => {
+  if (expertModeEnabled) return runExpeditionAutomations();
+});
 initExpertModeToggle()
   .then(() => loadAll())
   .then(() => {
     openHashTab();
     startAutomationScheduler();
+    void initExpeditionsTab().catch(error => {
+      console.error('[NexusOverseer] Could not initialize expedition automations:', error);
+    });
     // Load scouting data once so its automations do not depend on the visible tab.
     void initScoutingTab().catch(error => {
       console.error('[NexusOverseer] Could not initialize scouting automations:', error);
+    });
+    void initPiratesTab().catch(error => {
+      console.error('[NexusOverseer] Could not initialize pirate automations:', error);
     });
     return maybeWarnStorage();
   });

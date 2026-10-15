@@ -155,6 +155,8 @@ export async function initAsteroidsTab() {
   drawTypeIcons();
   drawZoneToggles();
   await loadLiveSearch();   // populate ls-* fields + button from saved config
+  await initLsStatus();
+  renderLsStatus();
   refreshSlots();
 
   await refreshTemplates();
@@ -331,17 +333,55 @@ function readLsConfig() {
 function saveLiveSearch() { return browser.runtime.sendMessage({ type: 'SET_LIVE_SEARCH', config: readLsConfig() }); }
 function saveLiveSearchIfOn() { if (lsRunning) saveLiveSearch(); }
 
+let lsStatusData = null;
+let lsStatusTimer = null;
+
+async function renderLsStatus() {
+  const status = document.getElementById('ls-status');
+  if (!status) return;
+  if (!lsRunning) { setStatusText(status, ''); return; }
+  const s = lsStatusData;
+  const time = t => new Date(t).toLocaleTimeString();
+  if (s && s.state === 'scanning' && Date.now() - s.at < 90000) {
+    const prog = s.limit ? ` ${s.scanned}/${s.limit} systems` : '';
+    setStatusText(status, `🔍 ${s.phase || 'Scanning…'}${prog}${s.matchingSystems ? `, ${s.matchingSystems} with matching types` : ''}, ${s.found || 0} matches so far`);
+    return;
+  }
+  if (s && s.state === 'error') {
+    setStatusText(status, `⚠ Last scan failed at ${time(s.at)}: ${s.error}`, 'warning');
+    return;
+  }
+  let next = '';
+  try {
+    const alarm = await browser.alarms.get('nexus-livesearch');
+    if (alarm) {
+      const mins = Math.max(0, Math.ceil((alarm.scheduledTime - Date.now()) / 60000));
+      next = ` Next scan in ~${mins} min.`;
+    }
+  } catch { /* alarms unavailable */ }
+  const noType = lsTypeFilter.size ? '' : ' ⚠ No resource type selected — every field type will match.';
+  if (s && s.state === 'idle') {
+    setStatusText(status, `Last scan ${time(s.at)}: ${s.scanned} systems, ${s.found} matches${s.fresh ? ` (${s.fresh} new)` : ''}.${next}${noType}`);
+  } else {
+    setStatusText(status, `Waiting for first scan…${next}${noType}`);
+  }
+}
+
 function setLsButton() {
   const btn = document.getElementById('ls-search');
-  const status = document.getElementById('ls-status');
   btn.textContent = lsRunning ? 'Stop Live Search' : 'Live Search';
   btn.classList.toggle('is-running', lsRunning);
-  if (!lsRunning) { setStatusText(status, ''); return; }
-  if (!lsTypeFilter.size) {
-    setStatusText(status, '⚠ No resource type selected — every field type will match.', 'warning');
-  } else {
-    setStatusText(status, 'Scanning every 5 min in the background — notifies on new matches.');
-  }
+  renderLsStatus();
+}
+
+async function initLsStatus() {
+  ({ live_search_status: lsStatusData } = await browser.storage.local.get('live_search_status'));
+  browser.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes.live_search_status) return;
+    lsStatusData = changes.live_search_status.newValue || null;
+    renderLsStatus();
+  });
+  if (!lsStatusTimer) lsStatusTimer = setInterval(renderLsStatus, 15000);
 }
 async function toggleLiveSearch() {
   if (!lsRunning && !document.getElementById('ls-planet').value) return;   // need a planet

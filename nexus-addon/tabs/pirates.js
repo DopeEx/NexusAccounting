@@ -1,6 +1,8 @@
 // Pirates tab.
 
-import { EXTRA_RES_KEYS_UI, PER_PAGE, SERIES_GETTERS, appendExtraResourceCards, applySort, attachSortable, computeResourcesLost, computeSeries, emptyResources, filterZone, fmt, fuelForMode, getLabelKey, getMode, isUnfiltered, makeResourceLineChart, makeStatCard, periodLabelFor, recordsForMode, renderLostCards, renderNetCards, store, windowActive, zoneCell } from '../common.js';
+import { loadFleetTemplates } from './fleets.js';
+import { suggestAttackFleet } from '../pirate-planner.js';
+import { EXTRA_RES_KEYS_UI, PER_PAGE, SERIES_GETTERS, appendExtraResourceCards, applySort, attachSortable, computeResourcesLost, computeSeries, editFleetDialog, emptyResources, filterZone, fmt, fmtCountdown, fuelForMode, getLabelKey, getMode, isUnfiltered, makeResourceLineChart, makeStatCard, missionProgress, periodLabelFor, recordsForMode, renderLostCards, renderNetCards, rememberSelection, rememberedSelections, setStatusText, store, windowActive, zoneCell, ZONE_COLORS } from '../common.js';
 
 export let chartPirateLoot, chartPirateOutcomes;
 
@@ -62,6 +64,556 @@ export function getPirateSeriesForMode() {
 }
 
 export function renderPiratesTab() {
+  initPiratesTab().then(refreshPirateData);
+}
+
+let pcReports = [];
+
+async function refreshPirateReports() {
+  const res = await browser.runtime.sendMessage({ type: 'GET_PIRATE_REPORTS' });
+  pcReports = res.error ? [] : (res.reports || []);
+  renderPirateReports(res.error);
+}
+
+const fleetText = list => (list || []).filter(s => s.quantity ?? s.lost)
+  .map(s => `${s.quantity ?? s.lost}× ${s.name}`).join(', ') || '—';
+const lossText = list => (list || []).filter(s => s.lost)
+  .map(s => `${s.lost}× ${s.name}`).join(', ') || '—';
+const resText = o => Object.entries(o || {}).filter(([, v]) => v)
+  .map(([k, v]) => `${fmt(v)} ${k}`).join(', ') || '—';
+
+function renderPirateReports(error) {
+  const tbody = document.getElementById('pr-tbody');
+  tbody.textContent = '';
+  document.getElementById('pr-count').textContent = error ? '' : `${pcReports.length} reports`;
+  if (error || !pcReports.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 10;
+    td.className = 'mission-empty-state';
+    td.textContent = error ? `Could not load reports: ${error}` : 'No pirate reports yet.';
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    return;
+  }
+  const campName = id => (pcCamps.find(c => c.id === id) || {}).name || `#${id}`;
+  for (const r of pcReports) {
+    const won = r.outcome === 'attacker_won';
+    const cells = [
+      r.createdAt ? new Date(r.createdAt).toLocaleString() : '—',
+      campName(r.campId),
+      won ? 'Victory' : 'Defeat',
+      (r.rounds || []).length,
+      fleetText(r.attackerFleet),
+      fleetText(r.pirateFleet),
+      lossText(r.attackerLosses),
+      lossText(r.pirateLosses),
+      resText(r.loot),
+      resText(r.debris),
+    ];
+    const tr = document.createElement('tr');
+    cells.forEach((v, i) => {
+      const td = document.createElement('td');
+      td.textContent = v;
+      if (i === 2) td.style.color = won ? '#3fb950' : '#f85149';
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  }
+}
+
+let pcInited = false;
+let pcCamps = [];
+let pcPlanets = [];
+
+let pcInitPromise = null;
+let pcAutoRunning = false;
+let pcLastRefreshAt = 0;
+let pcSlots = { max: null, used: 0 };
+const pcJustScouted = new Map();
+
+export function initPiratesTab() {
+  if (!pcInitPromise) {
+    pcInitPromise = initPirateCamps().then(() => refreshPirateData()).catch(error => {
+      pcInitPromise = null;
+      throw error;
+    });
+  }
+  return pcInitPromise;
+}
+
+async function refreshPirateData() {
+  await Promise.allSettled([refreshPirateCamps(true), refreshPirateMissions(), refreshPirateReports()]);
+  pcLastRefreshAt = Date.now();
+}
+
+export async function runPirateAutomations() {
+  if (!pcInitPromise) return;
+  await pcInitPromise.catch(() => {});
+  if (!pcInited) return;
+  if (Date.now() - pcLastRefreshAt >= 30_000) await refreshPirateData();
+  if (document.getElementById('pc-auto')?.checked) await automatePirateScouting();
+  if (document.getElementById('pc-auto-attack')?.checked) await automatePirateAttacks();
+}
+
+const campReportsSince = c => pcReports.filter(r => r.campId === c.id
+  && new Date(r.createdAt) > new Date(c.lastScoutedAt || 0));
+
+// Intel is stale after a respawn or after a fight that did not destroy the camp.
+const campNeedsScout = c => !c.destroyedAt && (!c.hasFleetIntel || !c.lastScoutedAt
+  || (c.lastSpawnedAt && new Date(c.lastSpawnedAt) > new Date(c.lastScoutedAt))
+  || campReportsSince(c).some(r => r.outcome !== 'attacker_won'));
+
+const campReadyToAttack = c => !c.destroyedAt && c.hasFleetIntel && (c.fleetIntel || []).length
+  && !campNeedsScout(c) && !campReportsSince(c).length;
+
+let pcAttackRunning = false;
+const pcJustAttacked = new Map();
+
+function attackLossGuard(since) {
+  let lost = 0;
+  let defeats = 0;
+  for (const r of pcReports) {
+    if (!r.createdAt || new Date(r.createdAt) < new Date(since)) continue;
+    lost += (r.attackerLosses || []).reduce((t, l) => t + (Number(l.lost) || 0), 0);
+    if (r.outcome !== 'attacker_won') defeats += 1;
+  }
+  return { lost, defeats };
+}
+
+// The reason is persisted so it is still visible after a reload.
+function stopAttackAutomation(reason, lock = false) {
+  const box = document.getElementById('pc-auto-attack');
+  box.checked = false;
+  if (lock) box.disabled = true;
+  rememberSelection('pc-auto-attack', false);
+  rememberSelection('pc-attack-stop-reason', reason);
+  setStatusText(document.getElementById('pc-attack-status'), reason, 'error');
+}
+
+async function automatePirateAttacks() {
+  if (pcAttackRunning) return;
+  pcAttackRunning = true;
+  const autoStatus = document.getElementById('pc-attack-status');
+  try {
+    await refreshPirateReports();
+    const since = (await rememberedSelections())['pc-attack-since'] || new Date().toISOString();
+    const limit = Math.max(1, Number(document.getElementById('pc-loss-limit').value) || 1);
+    const { lost, defeats } = attackLossGuard(since);
+    if (lost >= limit || defeats > 0) {
+      stopAttackAutomation(defeats
+        ? 'Stopped: an attack was lost.'
+        : `Stopped: ${lost} ship(s) lost since enabling (limit ${limit}).`);
+      return;
+    }
+
+    await refreshPirateMissions();
+    const now = Date.now();
+    for (const [id, t] of pcJustAttacked) {
+      if (now - t > 30_000 || pcMissions.some(m => m.raidParams?.campId === id)) pcJustAttacked.delete(id);
+    }
+    const busy = new Set(pcMissions.map(m => m.raidParams?.campId));
+    for (const id of pcJustAttacked.keys()) busy.add(id);
+
+    const maxVal = Number(document.getElementById('pc-max-attack').value);
+    const maxAttacks = Number.isInteger(maxVal) && maxVal > 0 ? maxVal : 1;
+    const attacking = pcMissions.filter(m => m.missionType === 'attack_pirates').length
+      + [...pcJustAttacked.keys()].filter(id => !pcMissions.some(m => m.raidParams?.campId === id)).length;
+    if (attacking >= maxAttacks) {
+      setStatusText(autoStatus, `Waiting… ${attacking}/${maxAttacks} attack fleets in flight.`);
+      return;
+    }
+    if (pcSlots.max != null && pcSlots.used >= pcSlots.max) {
+      setStatusText(autoStatus, `Cannot attack: ${pcSlots.used}/${pcSlots.max} fleet slots in use.`, 'warning');
+      return;
+    }
+    const planetId = Number(document.getElementById('pc-planet').value);
+    if (!planetId) { setStatusText(autoStatus, 'Select a planet first.'); return; }
+    const targets = pcCamps
+      .filter(c => campReadyToAttack(c) && !busy.has(c.id))
+      .sort((a, b) => (a.systemName || '').localeCompare(b.systemName || ''))
+      .slice(0, 3);
+    if (!targets.length) { setStatusText(autoStatus, 'No scouted camps to attack.'); return; }
+
+    const av = await browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId });
+    if (av.error) { setStatusText(autoStatus, `Error: ${av.error}`); return; }
+    setStatusText(autoStatus, 'Calculating attack fleet…');
+    let lastError = '';
+    for (const target of targets) {
+      const plan = await suggestAttackFleet(target, av.available);
+      if (plan.error) { lastError = `${target.name}: ${plan.error}`; continue; }
+      const ships = Object.entries(plan.ships).map(([id, quantity]) => ({ shipDefId: Number(id), quantity }));
+      const res = await browser.runtime.sendMessage({
+        type: 'SEND_ATTACK_PIRATES', sourcePlanetId: planetId, campId: target.id, ships,
+      });
+      if (res.error) {
+        if (String(res.error).includes('Human verification')) {
+          stopAttackAutomation(`Attack failed: ${res.error}`, true);
+        } else {
+          setStatusText(autoStatus, `Attack failed: ${res.error}`, 'warning');
+        }
+        return;
+      }
+      pcJustAttacked.set(target.id, Date.now());
+      setStatusText(autoStatus, `Attack sent to ${target.name} ✓ — ${plan.note.split('\n')[0]}`);
+      await refreshPirateMissions();
+      return;
+    }
+    setStatusText(autoStatus, lastError || 'No suitable fleet found.', 'warning');
+  } finally {
+    pcAttackRunning = false;
+  }
+}
+
+async function automatePirateScouting() {
+  if (pcAutoRunning) return;
+  pcAutoRunning = true;
+  const autoStatus = document.getElementById('pc-auto-status');
+  try {
+    await refreshPirateMissions();
+    const now = Date.now();
+    for (const [id, t] of pcJustScouted) {
+      if (now - t > 30_000 || pcMissions.some(m => m.raidParams?.campId === id)) pcJustScouted.delete(id);
+    }
+    const busy = new Set(pcMissions.map(m => m.raidParams?.campId));
+    for (const id of pcJustScouted.keys()) busy.add(id);
+
+    const maxEl = Number(document.getElementById('pc-max-scout').value);
+    const maxScouts = Number.isInteger(maxEl) && maxEl > 0 ? maxEl : 1;
+    const scouting = pcMissions.filter(m => m.missionType === 'scout_camp').length
+      + [...pcJustScouted.keys()].filter(id => !pcMissions.some(m => m.raidParams?.campId === id)).length;
+    if (scouting >= maxScouts) {
+      setStatusText(autoStatus, `Waiting… ${scouting}/${maxScouts} scouting fleets in flight.`);
+      return;
+    }
+    if (pcSlots.max != null && pcSlots.used >= pcSlots.max) {
+      setStatusText(autoStatus, `Cannot scout: ${pcSlots.used}/${pcSlots.max} fleet slots in use.`, 'warning');
+      return;
+    }
+    const planetId = Number(document.getElementById('pc-planet').value);
+    const planet = pcPlanets.find(p => p.id === planetId);
+    const target = pcCamps
+      .filter(c => campNeedsScout(c) && !busy.has(c.id))
+      .sort((a, b) => (a.systemName || '').localeCompare(b.systemName || ''))[0];
+    if (!target) { setStatusText(autoStatus, 'No camps need scouting.'); return; }
+    if (!planetId) { setStatusText(autoStatus, 'Select a planet first.'); return; }
+
+    const av = await browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId });
+    if (av.error) { setStatusText(autoStatus, `Error: ${av.error}`); return; }
+    const r = scoutTemplateShips(av.available);
+    if (r.error) { setStatusText(autoStatus, r.error); return; }
+
+    const res = await browser.runtime.sendMessage({
+      type: 'SEND_SCOUT_CAMP', sourcePlanetId: planetId, campId: target.id, ships: r.ships,
+    });
+    if (res.error) {
+      if (String(res.error).includes('Human verification')) {
+        const el = document.getElementById('pc-auto');
+        el.checked = false;
+        el.disabled = true;
+        rememberSelection('pc-auto', false);
+        setStatusText(autoStatus, `Scout failed: ${res.error}`, 'error');
+      } else {
+        setStatusText(autoStatus, `Scout failed: ${res.error}`, 'warning');
+      }
+      return;
+    }
+    pcJustScouted.set(target.id, Date.now());
+    setStatusText(autoStatus, `Scout sent to ${target.name} (${planet ? planet.name : planetId}) ✓`);
+    await refreshPirateMissions();
+  } finally {
+    pcAutoRunning = false;
+  }
+}
+
+async function initPirateCamps() {
+  if (pcInited) return;
+  pcInited = true;
+  document.getElementById('pc-refresh').addEventListener('click', () => {
+    refreshPirateCamps();
+    refreshPirateReports();
+  });
+  const autoBox = document.getElementById('pc-auto');
+  const savedSel = await rememberedSelections();
+  autoBox.checked = savedSel['pc-auto'] === true;
+  autoBox.addEventListener('change', e => rememberSelection('pc-auto', e.target.checked));
+  const maxScout = document.getElementById('pc-max-scout');
+  maxScout.value = savedSel['pc-max-scout'] ?? 1;
+  maxScout.addEventListener('change', e => rememberSelection('pc-max-scout', e.target.value));
+  const attackBox = document.getElementById('pc-auto-attack');
+  attackBox.checked = savedSel['pc-auto-attack'] === true;
+  attackBox.addEventListener('change', e => {
+    rememberSelection('pc-auto-attack', e.target.checked);
+    if (e.target.checked) {
+      rememberSelection('pc-attack-since', new Date().toISOString());
+      rememberSelection('pc-attack-stop-reason', '');
+    }
+  });
+  if (!attackBox.checked && savedSel['pc-attack-stop-reason']) {
+    setStatusText(document.getElementById('pc-attack-status'), savedSel['pc-attack-stop-reason'], 'error');
+  }
+  if (attackBox.checked && !savedSel['pc-attack-since']) rememberSelection('pc-attack-since', new Date().toISOString());
+  for (const [id, fallback] of [['pc-max-attack', 1], ['pc-loss-limit', 3]]) {
+    const input = document.getElementById(id);
+    input.value = savedSel[id] ?? fallback;
+    input.addEventListener('change', e => rememberSelection(id, e.target.value));
+  }
+
+  const planets = await browser.runtime.sendMessage({ type: 'GET_PLANETS' });
+  pcPlanets = planets.planets || [];
+  const sel = document.getElementById('pc-planet');
+  sel.textContent = '';
+  for (const p of pcPlanets) {
+    const o = document.createElement('option');
+    o.value = p.id; o.textContent = p.name;
+    if (p.isHomeworld) o.selected = true;
+    sel.appendChild(o);
+  }
+  const saved = await rememberedSelections();
+  if (saved['pc-planet'] && pcPlanets.some(p => String(p.id) === saved['pc-planet'])) sel.value = saved['pc-planet'];
+  sel.addEventListener('change', e => rememberSelection('pc-planet', e.target.value));
+  document.getElementById('pc-scout-template')
+    .addEventListener('change', e => rememberSelection('pc-scout-template', e.target.value));
+  await refreshPirateTemplates();
+  browser.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.fleet_templates) refreshPirateTemplates();
+  });
+
+  setInterval(() => {
+    if (document.getElementById('pirates-content').style.display === 'none') return;
+    for (const upd of pcCardTicks) upd();
+  }, 1000);
+}
+
+let pcTemplates = [];
+
+async function refreshPirateTemplates() {
+  pcTemplates = await loadFleetTemplates();
+  pcTemplates.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  const sel = document.getElementById('pc-scout-template');
+  const saved = await rememberedSelections();
+  const want = saved['pc-scout-template'] || sel.value;
+  sel.textContent = '';
+  if (!pcTemplates.length) {
+    const o = document.createElement('option');
+    o.value = ''; o.textContent = '— none (create in Fleet Templates) —';
+    sel.appendChild(o);
+    return;
+  }
+  for (const t of pcTemplates) {
+    const o = document.createElement('option');
+    o.value = t.id; o.textContent = t.name;
+    sel.appendChild(o);
+  }
+  if (want && pcTemplates.some(t => String(t.id) === want)) sel.value = want;
+}
+
+function scoutTemplateShips(available) {
+  const tpl = pcTemplates.find(t => String(t.id) === document.getElementById('pc-scout-template').value);
+  if (!tpl) return { error: 'No scout template selected — create one in Fleet Templates.' };
+  const ships = Object.entries(tpl.ships || {})
+    .map(([shipDefId, quantity]) => ({ shipDefId: Number(shipDefId), quantity: Math.min(quantity, available[shipDefId] || 0) }))
+    .filter(s => s.quantity > 0);
+  if (!ships.length) return { error: `None of template "${tpl.name}"'s ships are on this planet.` };
+  return { ships };
+}
+
+async function sendCampFleet(camp, { title, messageType, doneText, useTemplate }) {
+  const status = document.getElementById('pc-status');
+  const planetId = Number(document.getElementById('pc-planet').value);
+  const planet = pcPlanets.find(p => p.id === planetId);
+  if (!planetId) { setStatusText(status, 'Select a planet first.'); return; }
+  const av = await browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId });
+  if (av.error) { setStatusText(status, av.error); return; }
+
+  let ships;
+  if (useTemplate) {
+    const r = scoutTemplateShips(av.available);
+    if (r.error) { setStatusText(status, r.error); return; }
+    ships = r.ships;
+  } else {
+    const planner = messageType === 'SEND_ATTACK_PIRATES'
+      ? { label: 'Calculate fleet', run: () => suggestAttackFleet(camp, av.available) }
+      : null;
+    ships = await editFleetDialog({
+      title,
+      subtitle: `From: ${planet ? planet.name : planetId}\nCamp: ${camp.name} (${camp.systemName})`,
+      avail: av.available, planner,
+    });
+  }
+  if (!ships || !ships.length) return;
+
+  setStatusText(status, 'Sending…');
+  const res = await browser.runtime.sendMessage({
+    type: messageType, sourcePlanetId: planetId, campId: camp.id, ships,
+  });
+  if (res.error) { setStatusText(status, `Failed: ${res.error}`); return; }
+  setStatusText(status, `${doneText} ${camp.name} ✓`);
+  refreshPirateMissions();
+  setTimeout(refreshPirateMissions, 2000);
+}
+
+const PIRATE_MISSION_LABELS = { scout_camp: 'Scout', attack_pirates: 'Attack' };
+let pcMissions = [];
+let pcCardTicks = [];
+let pcCampsLoaded = false;
+
+async function refreshPirateMissions() {
+  const mi = await browser.runtime.sendMessage({ type: 'GET_MISSIONS' });
+  if (mi.error) return;
+  pcSlots = { max: mi.maxFleetSlots ?? null, used: (mi.missions || []).length };
+  pcMissions = (mi.missions || []).filter(m => PIRATE_MISSION_LABELS[m.missionType]);
+  if (pcCampsLoaded) renderPirateCamps();
+}
+
+const scoutCamp = camp => sendCampFleet(camp, {
+  title: 'Scout pirate camp', messageType: 'SEND_SCOUT_CAMP', doneText: 'Scout fleet sent to', useTemplate: true,
+});
+const attackCamp = camp => sendCampFleet(camp, {
+  title: 'Attack pirate camp', messageType: 'SEND_ATTACK_PIRATES', doneText: 'Attack fleet sent to',
+});
+
+async function refreshPirateCamps(silent = false) {
+  const res = await browser.runtime.sendMessage({ type: 'GET_PIRATE_CAMPS' });
+  if (res.error) {
+    if (!silent) renderPirateCamps(res.error);
+    return;
+  }
+  pcCamps = res.camps || [];
+  pcCampsLoaded = true;
+  renderPirateCamps();
+}
+
+function campIntelText(c) {
+  if (!c.hasFleetIntel || !(c.fleetIntel || []).length) return '—';
+  return c.fleetIntel.map(s => `${s.quantity}× ${s.name}`).join(', ');
+}
+
+function campStatus(c) {
+  if (c.destroyedAt) {
+    return c.respawnsAt ? `Destroyed — respawns ${new Date(c.respawnsAt).toLocaleString()}` : 'Destroyed';
+  }
+  return 'Active';
+}
+
+function renderPirateCamps(error) {
+  const list = document.getElementById('pc-list');
+  list.textContent = '';
+  pcCardTicks = [];
+  document.getElementById('pc-count').textContent = error ? '' : `${pcCamps.length} camps`;
+  if (error || !pcCamps.length) {
+    const d = document.createElement('div');
+    d.className = 'sc-transit-empty';
+    d.textContent = error ? `Could not load camps: ${error}` : 'No pirate camps visible.';
+    list.appendChild(d);
+    return;
+  }
+  const makeMetaItem = (label, value, color) => {
+    const item = document.createElement('div');
+    item.className = 'sc-debris-meta-item';
+    const key = document.createElement('span');
+    key.className = 'sc-debris-meta-key';
+    key.textContent = label;
+    const val = document.createElement('span');
+    val.className = 'sc-debris-meta-val';
+    val.textContent = value;
+    val.title = value;
+    if (color) val.style.color = color;
+    item.append(key, val);
+    return item;
+  };
+  const makeBtn = (cls, label, onClick) => {
+    const b = document.createElement('button');
+    b.className = `pc-icon-btn ${cls}`;
+    b.title = label;
+    b.setAttribute('aria-label', label);
+    b.addEventListener('click', onClick);
+    return b;
+  };
+  const rows = [...pcCamps].sort((a, b) => Number(!!a.destroyedAt) - Number(!!b.destroyedAt)
+    || (a.systemName || '').localeCompare(b.systemName || ''));
+  for (const c of rows) {
+    const hp = c.scoutHpPercent ?? c.currentHpPercent;
+    const card = document.createElement('div');
+    card.className = 'sc-debris-card';
+    if (c.destroyedAt) card.style.opacity = '0.45';
+
+    const action = document.createElement('div');
+    action.className = 'sc-debris-action';
+    const busy = pcMissions.some(x => x.raidParams?.campId === c.id);
+    if (!c.destroyedAt) {
+      const sb = makeBtn('pc-btn-scout', 'Scout camp', () => scoutCamp(c));
+      const ab = makeBtn('pc-btn-attack', 'Attack camp', () => attackCamp(c));
+      if (busy) {
+        for (const b of [sb, ab]) {
+          b.disabled = true;
+          b.title = 'A fleet is already active at this camp';
+        }
+      }
+      action.append(sb, ab);
+    }
+
+    const meta = document.createElement('div');
+    meta.className = 'sc-debris-meta-grid pc-meta-grid';
+    const etaItem = makeMetaItem('Progress ETA', '—');
+    etaItem.classList.add('sc-eta-grid-item');
+    const etaVal = etaItem.querySelector('.sc-debris-meta-val');
+    etaVal.classList.add('sc-debris-progress-eta');
+    etaVal.title = '';
+    const campItem = makeMetaItem('Camp', c.name || `#${c.id}`);
+    meta.append(
+      campItem,
+      makeMetaItem('System', c.systemName || String(c.systemId)),
+      makeMetaItem('Zone', c.securityZone || '—', ZONE_COLORS[c.securityZone] || ZONE_COLORS.unknown),
+      makeMetaItem('Tier', c.tier || '—'),
+      makeMetaItem('Loot', c.lootTier || '—'),
+      makeMetaItem('HP', hp == null ? '—' : `${hp}%`),
+      makeMetaItem('Status', campStatus(c)),
+      makeMetaItem('Last scouted', c.lastScoutedAt ? new Date(c.lastScoutedAt).toLocaleString() : 'never'),
+      makeMetaItem('Fleet intel', campIntelText(c)),
+      etaItem,
+    );
+
+    const body = document.createElement('div');
+    body.className = 'sc-mission-main sc-debris-main';
+    body.append(action, meta);
+
+    const progress = document.createElement('div');
+    progress.className = 'sc-debris-progress';
+    mountCardProgress(pcMissions.find(x => x.raidParams?.campId === c.id), progress, campItem, etaVal);
+
+    card.append(body, progress);
+    list.appendChild(card);
+  }
+}
+
+function mountCardProgress(m, host, systemItem, etaVal) {
+  const track = document.createElement('div');
+  track.className = 'mission-progress-track sc-transit-track sc-debris-progress-track';
+  const fill = document.createElement('div');
+  fill.className = 'mission-progress-fill sc-transit-fill sc-debris-progress-fill';
+  track.appendChild(fill);
+  host.appendChild(track);
+  const status = document.createElement('span');
+  status.className = 'sc-transit-status sc-debris-system-status';
+  status.textContent = '—';
+  systemItem.appendChild(status);
+  if (!m) { fill.style.width = '0%'; return; }
+
+  const kind = m.missionType === 'scout_camp' ? 'Scouting' : 'Attack';
+  const upd = () => {
+    const p = missionProgress(m);
+    fill.style.width = `${(p.frac * 100).toFixed(1)}%`;
+    fill.style.background = p.gradient || p.color;
+    status.textContent = `${p.label} · ${kind}`;
+    status.style.color = p.color;
+    etaVal.textContent = p.eta > 0 ? fmtCountdown(p.eta) : '—';
+  };
+  upd();
+  pcCardTicks.push(upd);
+}
+
+export function renderPirateStatsTab() {
   const mode = getMode();
   const periodLabel = periodLabelFor(mode);
   const t = getPirateTotalsForMode();
