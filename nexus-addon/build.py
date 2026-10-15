@@ -44,9 +44,19 @@ def read_version():
         return json.load(f)['version']
 
 
+def firefox_manifest():
+    """Firefox ignores background.service_worker, so its package gets a
+    background.scripts fallback. Chrome rejects that key in MV3, so the repo
+    manifest (and the Chrome zip) keep service_worker only."""
+    with open(os.path.join(HERE, 'manifest.json'), encoding='utf-8') as f:
+        manifest = json.load(f)
+    manifest['background']['scripts'] = [manifest['background']['service_worker']]
+    return json.dumps(manifest, indent=2, ensure_ascii=False) + '\n'
+
+
 def build(version):
-    """Write the package as both .xpi (Firefox/AMO) and .zip (Chrome Web
-    Store) — identical contents, the manifest is MV3 for both."""
+    """Write the package as .xpi (Firefox/AMO, with the scripts fallback in
+    its manifest) and .zip (Chrome Web Store)."""
     import zipfile
     targets = []
     for ext in ('xpi', 'zip'):
@@ -57,7 +67,10 @@ def build(version):
                 print(f'removed {os.path.basename(old)}')
         with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as z:
             for name in FILES:
-                z.write(os.path.join(HERE, name), name)
+                if name == 'manifest.json' and ext == 'xpi':
+                    z.writestr(name, firefox_manifest())
+                else:
+                    z.write(os.path.join(HERE, name), name)
         size = os.path.getsize(target) // 1024
         print(f'built {os.path.basename(target)} ({size} KB, {len(FILES)} files)')
         targets.append(target)
@@ -85,9 +98,20 @@ def sign(version):
         sys.exit('Missing WEB_EXT_API_KEY / WEB_EXT_API_SECRET (env or ../.env).')
 
     artifacts = os.path.join(ROOT, 'web-ext-artifacts')
+    # Sign from a staged copy so the submitted manifest has the Firefox fallback.
+    stage = os.path.join(ROOT, 'web-ext-source')
+    shutil.rmtree(stage, ignore_errors=True)
+    for name in FILES:
+        dest = os.path.join(stage, name)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        if name == 'manifest.json':
+            with open(dest, 'w', encoding='utf-8') as f:
+                f.write(firefox_manifest())
+        else:
+            shutil.copy2(os.path.join(HERE, name), dest)
     cmd = [
         'npx', '--yes', 'web-ext', 'sign',
-        '--source-dir', HERE,
+        '--source-dir', stage,
         '--artifacts-dir', artifacts,
         '--channel', 'listed',
         '--api-key', key,
