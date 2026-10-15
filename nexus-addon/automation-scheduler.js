@@ -25,7 +25,7 @@ export function runAutomationCycle() {
       try {
         await run();
       } catch (error) {
-        console.error(`[NexusAccounting] Automation task "${name}" failed:`, error);
+        console.error(`[NexusOverseer] Automation task "${name}" failed:`, error);
       }
     }
   })().finally(() => {

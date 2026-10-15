@@ -63,5 +63,5 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --notes "Bug-fix release: mining fleets can be sent again from the Asteroids tab, and fleet markers now show only the belt actually being mined.
 
-Full technical details: [CHANGELOG.md](https://github.com/DopeEx/NexusAccounting/blob/$GITHUB_REF_NAME/nexus-addon/CHANGELOG.md)" \
-            nexus-accounting-*.xpi nexus-accounting-*.zip
+Full technical details: [CHANGELOG.md](https://github.com/DopeEx/NexusOverseer/blob/$GITHUB_REF_NAME/nexus-addon/CHANGELOG.md)" \
+            nexus-overseer-*.xpi nexus-overseer-*.zip

@@ -321,7 +321,7 @@ async function initializeScoutingTab() {
     for (const k in scTicks) for (const upd of scTicks[k]) upd();   // advance all progress bars
     if (++scTick % 10 === 0) updateAvail();       // catch returning fleets
     if (Date.now() - (scLastRefreshAt || 0) >= 30_000) {
-      refreshScoutingData().catch(error => console.error('[NexusAccounting] Scouting refresh failed:', error));
+      refreshScoutingData().catch(error => console.error('[NexusOverseer] Scouting refresh failed:', error));
     }
   }, 1000);
 
@@ -1389,14 +1389,14 @@ async function refreshDebris() {
   try {
     const result = await browser.runtime.sendMessage({ type: 'REFRESH_DEBRIS' });
     if (result?.error) {
-      console.warn('[NexusAccounting] Live debris refresh failed; using saved fields:', result.error);
+      console.warn('[NexusOverseer] Live debris refresh failed; using saved fields:', result.error);
       setStatusText(document.getElementById('sc-debris-status'),
         `Live refresh failed: ${result.error}. Showing saved fields.`, 'warning');
     } else {
       setStatusText(document.getElementById('sc-debris-status'), '');
     }
   } catch (error) {
-    console.warn('[NexusAccounting] Live debris refresh failed; using saved fields:', error);
+    console.warn('[NexusOverseer] Live debris refresh failed; using saved fields:', error);
     setStatusText(document.getElementById('sc-debris-status'),
       `Live refresh failed: ${error.message}. Showing saved fields.`, 'warning');
   }

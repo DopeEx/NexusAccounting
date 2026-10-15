@@ -53,7 +53,7 @@ async function getUniverses({ refresh = false } = {}) {
     await browser.storage.local.set({ universes, universes_fetched_at: Date.now() });
     return universes;
   } catch (error) {
-    console.warn('[NexusAccounting] Universe list fetch failed:', error.message);
+    console.warn('[NexusOverseer] Universe list fetch failed:', error.message);
     return cached.length ? cached : UNIVERSE_FALLBACK;
   }
 }
@@ -153,10 +153,10 @@ async function ensureScrapeAlarm() {
     const alarm = await browser.alarms.get(ALARM);
     if (!alarm) {
       browser.alarms.create(ALARM, { periodInMinutes: INTERVAL_MIN });
-      console.log('[NexusAccounting] Re-armed periodic scrape alarm.');
+      console.log('[NexusOverseer] Re-armed periodic scrape alarm.');
     }
   } catch (err) {
-    console.warn('[NexusAccounting] Failed to ensure scrape alarm:', err);
+    console.warn('[NexusOverseer] Failed to ensure scrape alarm:', err);
   }
 }
 
@@ -171,7 +171,7 @@ browser.runtime.onInstalled.addListener(async details => {
     try {
       await backupToDownloads(`pre-update-${details.previousVersion || 'unknown'}`);
     } catch (err) {
-      console.warn('[NexusAccounting] Pre-update backup failed:', err);
+      console.warn('[NexusOverseer] Pre-update backup failed:', err);
     }
   }
   await scrape();
@@ -317,7 +317,7 @@ async function liveSearchScan() {
       });
     }
   } catch (err) {
-    console.warn('[NexusAccounting] Live search failed:', err);
+    console.warn('[NexusOverseer] Live search failed:', err);
   }
 }
 
@@ -765,7 +765,7 @@ async function getHomePlanetId() {
   const home = planets.find(p => p.isHomeworld) || planets[0];
   if (!home) throw new Error('No planets found for this account');
   await browser.storage.local.set({ planet_id: home.id });
-  console.log(`[NexusAccounting] Home planet: ${home.name} (#${home.id})`);
+  console.log(`[NexusOverseer] Home planet: ${home.name} (#${home.id})`);
   return home.id;
 }
 
@@ -972,7 +972,7 @@ let processing = Promise.resolve();
 
 function enqueue(fn) {
   processing = processing.then(fn).catch(async err => {
-    console.error('[NexusAccounting] Processing failed:', err);
+    console.error('[NexusOverseer] Processing failed:', err);
     await browser.storage.local.set({ last_error: err.message });
   });
   return processing;
@@ -1261,7 +1261,7 @@ async function backfillZones(zones, campZones = {}, wormholeZones = {}) {
     }
   }
   await browser.storage.local.set({ zones_backfilled: true });
-  console.log('[NexusAccounting] Zone back-fill complete.');
+  console.log('[NexusOverseer] Zone back-fill complete.');
 }
 
 // Ship catalog keyed by shipDefId
@@ -2572,11 +2572,11 @@ async function rebuildAggregates() {
 
   await browser.storage.local.set(out);
   await browser.storage.local.remove('stats_drift');
-  console.log('[NexusAccounting] Aggregates rebuilt from stored records.');
+  console.log('[NexusOverseer] Aggregates rebuilt from stored records.');
 }
 
 // ── Backups ─────────────────────────────────────────────────────────────────
-// Full storage snapshots written to Downloads/NexusAccounting/: weekly while
+// Full storage snapshots written to Downloads/NexusOverseer/: weekly while
 // scraping runs, and before every destructive operation (reset, import,
 // schema-fallback wipe). Same format as the manual dashboard export.
 
@@ -2596,12 +2596,12 @@ async function backupToDownloads(reason) {
   const url = 'data:application/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(payload));
   await browser.downloads.download({
     url,
-    filename: `NexusAccounting/nexus-accounting-${reason}-${new Date().toISOString().slice(0, 10)}.json`,
+    filename: `NexusOverseer/nexus-overseer-${reason}-${new Date().toISOString().slice(0, 10)}.json`,
     conflictAction: 'uniquify',
     saveAs: false,
   });
   await browser.storage.local.set({ last_backup: new Date().toISOString() });
-  console.log(`[NexusAccounting] Backup written (${reason}).`);
+  console.log(`[NexusOverseer] Backup written (${reason}).`);
 }
 
 async function maybeAutoBackup() {
@@ -2610,7 +2610,7 @@ async function maybeAutoBackup() {
   try {
     await backupToDownloads('auto');
   } catch (err) {
-    console.warn('[NexusAccounting] Auto-backup failed:', err);
+    console.warn('[NexusOverseer] Auto-backup failed:', err);
   }
 }
 
@@ -2660,7 +2660,7 @@ async function checkDrift() {
     await browser.storage.local.set({
       stats_drift: { detected_at: new Date().toISOString(), fields: problems },
     });
-    console.warn('[NexusAccounting] Stats drift detected:', problems.join(', '));
+    console.warn('[NexusOverseer] Stats drift detected:', problems.join(', '));
   } else {
     await browser.storage.local.remove('stats_drift');
   }
@@ -2748,15 +2748,15 @@ async function ensureSchema() {
 
   for (let v = from + 1; v <= SCHEMA_VERSION; v++) {
     if (MIGRATIONS[v]) {
-      console.log(`[NexusAccounting] Migrating storage to schema ${v}.`);
+      console.log(`[NexusOverseer] Migrating storage to schema ${v}.`);
       await MIGRATIONS[v]();
     } else if (from !== 0) {
       // No migration path from this version — snapshot, then wipe and re-scrape.
-      console.log(`[NexusAccounting] No migration to schema ${v}, resetting storage.`);
+      console.log(`[NexusOverseer] No migration to schema ${v}, resetting storage.`);
       try {
         await backupToDownloads('pre-schema-wipe');
       } catch (err) {
-        console.warn('[NexusAccounting] Pre-wipe backup failed:', err);
+        console.warn('[NexusOverseer] Pre-wipe backup failed:', err);
       }
       const { records_cap } = await browser.storage.local.get('records_cap');
       await browser.storage.local.clear();
@@ -2865,7 +2865,7 @@ async function scrapeCurrentUniverse() {
       await processCampScoutReports(campScoutData.reports || []);
       await processPvpReports(pvpData.reports || []);
       await checkDrift();
-      console.log(`[NexusAccounting] Scraped ${nSurveys} surveys, ${nPirates} pirate, ${nMining} mining reports.`);
+      console.log(`[NexusOverseer] Scraped ${nSurveys} surveys, ${nPirates} pirate, ${nMining} mining reports.`);
     });
     await maybeAutoBackup();
     await browser.storage.local.set({
@@ -2874,7 +2874,7 @@ async function scrapeCurrentUniverse() {
     });
     return { ok: true };
   } catch (err) {
-    console.error('[NexusAccounting] Scrape failed:', err);
+    console.error('[NexusOverseer] Scrape failed:', err);
     // Cached planet may be gone (recolonized) — rediscover on next scrape.
     if (err.message.includes('→ 404')) await browser.storage.local.remove('planet_id');
     await browser.storage.local.set({ last_error: err.message });
@@ -2942,7 +2942,7 @@ async function refetchEndpoint(path, serverKey) {
       await refresh();
     }
   } catch (error) {
-    console.warn(`[NexusAccounting] Realtime refresh failed for ${serverKey}${path}:`, error.message);
+    console.warn(`[NexusOverseer] Realtime refresh failed for ${serverKey}${path}:`, error.message);
   }
 }
 
@@ -2998,7 +2998,7 @@ function routeIntercepted(url, json) {
     else if (url.includes('/mining-reports')) n = await processMiningReports(json.reports || [], ships, zones);
     else if (url.includes('/expedition-reports')) n = await processExpeditionReports(json.reports || [], [], ships, zones, wz, wc);
     else if (url.includes('/wormhole-runs')) n = await processExpeditionReports([], json.runs || [], ships, zones, wz, wc);
-    if (n) console.log(`[NexusAccounting] Realtime: ${n} new reports from ${url}`);
+    if (n) console.log(`[NexusOverseer] Realtime: ${n} new reports from ${url}`);
   });
 }
 

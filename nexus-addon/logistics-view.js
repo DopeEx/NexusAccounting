@@ -523,7 +523,7 @@ async function loadCargoSel() {
     }
   } catch (error) {
     cargoSelLoadError = error;
-    console.error('[NexusAccounting] Could not load Quartermaster transport selection.', error);
+    console.error('[NexusOverseer] Could not load Quartermaster transport selection.', error);
   }
 }
 // Cargo haulers on a colony (effective capacity). If `wantKeys` (snake cargo
@@ -576,7 +576,7 @@ function cargoPicker(haulers, onChange, status) {
       try {
         await ext.storage.local.set({ [CARGO_SELECTION_KEY]: [...next] });
       } catch (error) {
-        console.error('[NexusAccounting] Could not save Quartermaster transport selection.', error);
+        console.error('[NexusOverseer] Could not save Quartermaster transport selection.', error);
         setStatusText(status, 'Could not save transport selection.', 'error');
         for (const pickerButton of wrap.querySelectorAll('button')) pickerButton.disabled = false;
         return;

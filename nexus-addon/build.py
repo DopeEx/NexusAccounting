@@ -21,7 +21,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-ARTIFACT_BASENAME = 'nexus-accounting-dopeex'
+ARTIFACT_BASENAME = 'nexus-overseer'
 
 FILES = [
     'manifest.json',

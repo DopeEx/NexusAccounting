@@ -6,7 +6,7 @@ set -euo pipefail
 # - Creates a timestamped backup before replacing files.
 # - Replaces content from GitHub without interactive prompts.
 
-REPO_URL="${NEXUS_REPO_URL:-https://github.com/DopeEx/NexusAccounting.git}"
+REPO_URL="${NEXUS_REPO_URL:-https://github.com/DopeEx/NexusOverseer.git}"
 BRANCH="${NEXUS_REPO_BRANCH:-master}"
 SUBDIR="nexus-addon"
 

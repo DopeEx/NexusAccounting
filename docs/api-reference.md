@@ -1,6 +1,6 @@
 # Nexus Legacy API integration
 
-This page documents the game API routes currently used by Nexus Accounting. It is
+This page documents the game API routes currently used by Nexus Overseer. It is
 a practical integration reference, not a complete or official specification of
 the Nexus Legacy API. Routes and response fields can change without notice.
 

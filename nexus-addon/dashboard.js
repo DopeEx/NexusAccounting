@@ -59,7 +59,7 @@ async function populateServerOptions(select, activeServer) {
   try {
     universes = await browser.runtime.sendMessage({ type: 'GET_UNIVERSES' });
   } catch (error) {
-    console.warn('[NexusAccounting] Could not load the universe list:', error.message);
+    console.warn('[NexusOverseer] Could not load the universe list:', error.message);
   }
   if (!Array.isArray(universes) || !universes.length) return;
 
@@ -440,7 +440,7 @@ document.getElementById('window-to').addEventListener('change', onViewChange);
 document.getElementById('event-select').addEventListener('change', () => { setCurrentPage(1); renderAll(); });
 
 document.getElementById('btn-reset').addEventListener('click', async function () {
-  if (!confirm('Drop all recorded data? A backup is written to Downloads/NexusAccounting first.')) return;
+  if (!confirm('Drop all recorded data? A backup is written to Downloads/NexusOverseer first.')) return;
   await browser.runtime.sendMessage({ type: 'BACKUP_NOW', reason: 'pre-reset' });
   const recordsCap = globalThis.nexusStorage?.get ? (await globalThis.nexusStorage.get('records_cap')).records_cap : undefined;
   if (globalThis.nexusStorage?.clearAllStorage) {
@@ -522,7 +522,7 @@ document.getElementById('btn-export').addEventListener('click', async function (
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `nexus-accounting-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `nexus-overseer-backup-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   this.textContent = 'Exported ✓';
@@ -574,11 +574,11 @@ document.getElementById('import-file').addEventListener('change', async function
   try {
     const payload = JSON.parse(await file.text());
     if (!payload || payload.nexus_accounting_backup !== 1 || !payload.data || Array.isArray(payload.data) || typeof payload.data !== 'object') {
-      throw new Error('not a Nexus Accounting backup file');
+      throw new Error('not a Nexus Overseer backup file');
     }
     validateBackupData(payload.data);
     const exportedAt = payload.exported_at ? new Date(payload.exported_at).toLocaleString() : 'unknown date';
-    if (!confirm(`Replace ALL current data with backup from ${exportedAt}?\n\nA snapshot of the current data is written to Downloads/NexusAccounting first.`)) return;
+    if (!confirm(`Replace ALL current data with backup from ${exportedAt}?\n\nA snapshot of the current data is written to Downloads/NexusOverseer first.`)) return;
 
     await browser.runtime.sendMessage({ type: 'BACKUP_NOW', reason: 'pre-import' });
     const data = payload.data;
@@ -631,7 +631,7 @@ initExpertModeToggle()
     startAutomationScheduler();
     // Load scouting data once so its automations do not depend on the visible tab.
     void initScoutingTab().catch(error => {
-      console.error('[NexusAccounting] Could not initialize scouting automations:', error);
+      console.error('[NexusOverseer] Could not initialize scouting automations:', error);
     });
     return maybeWarnStorage();
   });

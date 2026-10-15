@@ -80,7 +80,7 @@ function openGuide() {
       'style="width:100%; height:100%; object-fit:cover; object-position:center 40%; display:block; opacity:0.85;">' +
     '<div style="position:absolute; inset:0; display:flex; flex-direction:column; justify-content:center; padding:0 24px;' +
       'background:linear-gradient(90deg, rgba(8,10,16,0.85) 0%, rgba(8,10,16,0.35) 60%, rgba(8,10,16,0) 100%);">' +
-      '<h1 style="margin:0; font-size:1.9rem; color:#e6edf3;">Nexus Accounting: User Guide</h1>' +
+      '<h1 style="margin:0; font-size:1.9rem; color:#e6edf3;">Nexus Overseer: User Guide</h1>' +
       '<p style="margin:5px 0 0; color:#9aa4b2; font-size:0.9rem;">How the addon works, feature by feature</p>' +
     '</div>';
   page.appendChild(hero);

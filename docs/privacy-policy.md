@@ -1,8 +1,8 @@
-# Privacy Policy — Nexus Accounting
+# Privacy Policy — Nexus Overseer
 
 **Last updated: 2026-10-11**
 
-Nexus Accounting is a browser extension that reads your Nexus Legacy game data and displays it locally as a personal accounting dashboard. This policy describes exactly what data the extension accesses, how it is used, and where it goes.
+Nexus Overseer is a browser extension that reads your Nexus Legacy game data and displays it locally as a personal accounting dashboard. This policy describes exactly what data the extension accesses, how it is used, and where it goes.
 
 ---
 
@@ -44,7 +44,7 @@ No data is used for advertising, profiling, or any purpose unrelated to displayi
 
 All data is stored **locally on your device only**, in the browser's `storage.local` area (isolated to this extension). Nothing is uploaded to any server operated by the extension author.
 
-The extension also writes automatic backup files to your `Downloads/NexusAccounting/` folder before destructive operations (reset, import, schema migrations) and as a weekly auto-backup. These files are plain JSON and remain on your device under your control.
+The extension also writes automatic backup files to your `Downloads/NexusOverseer/` folder before destructive operations (reset, import, schema migrations) and as a weekly auto-backup. These files are plain JSON and remain on your device under your control.
 
 ---
 
@@ -80,4 +80,4 @@ All communication with the game API uses HTTPS. Requests are made through the lo
 
 ## 8. Contact
 
-If you have questions about this policy, open an issue in the [DopeEx/NexusAccounting repository](https://github.com/DopeEx/NexusAccounting/issues).
+If you have questions about this policy, open an issue in the [DopeEx/NexusOverseer repository](https://github.com/DopeEx/NexusOverseer/issues).

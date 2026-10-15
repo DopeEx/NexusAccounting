@@ -6,13 +6,13 @@ REM - Works even when this folder is not a git repository.
 REM - Creates a timestamped backup before replacing files.
 REM - Replaces content from GitHub without interactive prompts.
 
-set "REPO_URL=https://github.com/DopeEx/NexusAccounting.git"
+set "REPO_URL=https://github.com/DopeEx/NexusOverseer.git"
 if not "%NEXUS_REPO_URL%"=="" set "REPO_URL=%NEXUS_REPO_URL%"
 
 set "BRANCH=master"
 if not "%NEXUS_REPO_BRANCH%"=="" set "BRANCH=%NEXUS_REPO_BRANCH%"
 
-set "ZIP_URL=https://github.com/DopeEx/NexusAccounting/archive/refs/heads/%BRANCH%.zip"
+set "ZIP_URL=https://github.com/DopeEx/NexusOverseer/archive/refs/heads/%BRANCH%.zip"
 if not "%NEXUS_ZIP_URL%"=="" set "ZIP_URL=%NEXUS_ZIP_URL%"
 
 set "SUBDIR=nexus-addon"

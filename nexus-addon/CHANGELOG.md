@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the Nexus Accounting Firefox addon.
+All notable changes to the Nexus Overseer Firefox addon (formerly Nexus Accounting).
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
