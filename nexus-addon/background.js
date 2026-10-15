@@ -2653,7 +2653,7 @@ async function backupToDownloads(reason) {
   const data = globalThis.nexusStorage?.exportFullStorage ? await globalThis.nexusStorage.exportFullStorage() : await browser.storage.local.get(null);
   if (data.records_cap === Infinity) data.records_cap = 0;
   const payload = {
-    nexus_accounting_backup: 1,
+    nexus_overseer_backup: 1,
     exported_at: new Date().toISOString(),
     reason,
     data,
