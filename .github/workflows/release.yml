@@ -19,6 +19,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write   # create the GitHub release
+    env:
+      WEB_EXT_API_KEY: ${{ secrets.WEB_EXT_API_KEY }}
+      WEB_EXT_API_SECRET: ${{ secrets.WEB_EXT_API_SECRET }}
+      CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+      CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+      CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+      CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
 
     steps:
       - uses: actions/checkout@v5
@@ -39,21 +46,33 @@ jobs:
             exit 1
           fi
 
-      - name: Build and submit to AMO (Firefox, listed)
+      - name: Build packages
         working-directory: nexus-addon
-        env:
-          WEB_EXT_API_KEY: ${{ secrets.WEB_EXT_API_KEY }}
-          WEB_EXT_API_SECRET: ${{ secrets.WEB_EXT_API_SECRET }}
+        run: python3 build.py
+
+      # The store steps run only when their secrets exist, so a release
+      # without store credentials still produces the GitHub release.
+      - name: Build and submit to AMO (Firefox, listed)
+        if: env.WEB_EXT_API_KEY != '' && env.WEB_EXT_API_SECRET != ''
+        working-directory: nexus-addon
         run: python3 build.py --sign
 
       - name: Publish to Chrome Web Store
+        if: env.CWS_EXTENSION_ID != '' && env.CWS_REFRESH_TOKEN != ''
         working-directory: nexus-addon
-        env:
-          CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
-          CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
-          CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
-          CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
         run: python3 build.py --chrome
+
+      - name: Extract release notes from the changelog
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { on=1; next }
+            on && /^## \[/ { exit }
+            on { print }
+          ' nexus-addon/CHANGELOG.md > release-notes.md
+          echo "" >> release-notes.md
+          echo "Full changelog: https://github.com/DopeEx/NexusOverseer/blob/$GITHUB_REF_NAME/nexus-addon/CHANGELOG.md" >> release-notes.md
+          test -s release-notes.md
 
       - name: Create GitHub release with the packages
         env:
@@ -61,7 +80,5 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
-            --notes "Bug-fix release: mining fleets can be sent again from the Asteroids tab, and fleet markers now show only the belt actually being mined.
-
-Full technical details: [CHANGELOG.md](https://github.com/DopeEx/NexusOverseer/blob/$GITHUB_REF_NAME/nexus-addon/CHANGELOG.md)" \
+            --notes-file release-notes.md \
             nexus-overseer-*.xpi nexus-overseer-*.zip
