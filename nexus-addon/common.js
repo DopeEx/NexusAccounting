@@ -113,18 +113,23 @@ export async function confirmDialog(message, ships) {
 
 // Editable fleet dialog — the launch-time fleet editor (mirrors the live-search
 // panel's editor). Rows = union of seeded ships and ships available on the
-// source planet; each quantity is capped to availability. `seed` is
+// source planet; seeded quantities are capped to availability. Optional
+// requirements keep recommended/template groups from being silently reduced.
 // {shipDefId → wanted qty}, `avail` is {shipDefId → count on planet}. Resolves
 // to [{shipDefId, quantity}] on confirm (send once), or null on cancel.
 export async function editFleetDialog({
   title, subtitle = '', avail = {}, seed = {}, recShips = [], miningShipIds = null,
   excavatorShipDefId = null, excavatorBonus = 1.2, escortTemplates = [], autoEscortTemplate = null, untilFullState = null,
-  escortRetreatThresholdState = null,
+  escortRetreatThresholdState = null, refreshAvailability = null,
 }) {
   const defs = await shipDefs();
   const ids = [...new Set([
     ...Object.keys(seed).map(Number),
     ...Object.keys(avail).map(Number).filter(id => (avail[id] || 0) > 0),
+    ...recShips.map(ship => ship.shipDefId),
+    ...(miningShipIds || []),
+    ...(excavatorShipDefId != null ? [excavatorShipDefId] : []),
+    ...escortTemplates.flatMap(template => Object.keys(template.ships || {}).map(Number)),
   ])];
   const state = new Map();
   for (const id of ids) {
@@ -132,8 +137,9 @@ export async function editFleetDialog({
     if (q > 0) state.set(id, q);
   }
   const effective = () => [...state.entries()]
-    .map(([id, q]) => ({ shipDefId: id, quantity: Math.min(q, avail[id] || 0) }))
+    .map(([id, q]) => ({ shipDefId: id, quantity: q }))
     .filter(s => s.quantity > 0);
+  const requiredShips = new Map();
 
   return new Promise((resolve) => {
     const ov = document.createElement('div');
@@ -158,6 +164,11 @@ export async function editFleetDialog({
       rows.style.color = '#8b949e';
     }
     const ok = document.createElement('button');   // declared early for refresh()
+    const validation = document.createElement('div');
+    validation.setAttribute('role', 'alert');
+    validation.style.cssText = 'margin-top:10px;color:#ff7b72;font-size:0.82rem;white-space:pre-line';
+    let confirming = false;
+    let availabilityError = '';
     let escortButtonRow = null;
     let escortLabel = null;
     const excavatorAvailable = excavatorShipDefId != null && (avail[excavatorShipDefId] || 0) > 0;
@@ -183,6 +194,8 @@ export async function editFleetDialog({
         const required = template.escortPerMiner
           ? Math.ceil(quantity * minerCount)
           : Math.ceil(quantity);
+        if (required > 0) requiredShips.set(id, { quantity: required, label: `${template.name} escort` });
+        else requiredShips.delete(id);
         const nextQuantity = Math.min(
           exact ? required : Math.max(state.get(id) || 0, required),
           avail[id] || 0,
@@ -239,9 +252,32 @@ export async function editFleetDialog({
     };
 
     const refresh = () => {
-      ok.disabled = !effective().length;
+      const issues = validateFleet();
+      ok.disabled = confirming || !effective().length || issues.length > 0;
       ok.style.opacity = ok.disabled ? '0.5' : '1';
+      validation.textContent = issues.join('\n');
       rebuildEscortButtons();
+    };
+    const validateFleet = () => {
+      const issues = availabilityError ? [availabilityError] : [];
+      for (const [id, requirement] of requiredShips) {
+        const count = avail[id] || 0;
+        if (requirement.quantity > count) {
+          const name = defs[id]?.name || `#${id}`;
+          issues.push(`${requirement.label}: ${name} needs ${requirement.quantity}, only ${count} available.`);
+        } else if ((state.get(id) || 0) < requirement.quantity) {
+          const name = defs[id]?.name || `#${id}`;
+          issues.push(`${requirement.label}: increase ${name} to ${requirement.quantity}.`);
+        }
+      }
+      for (const [id, quantity] of state) {
+        const count = avail[id] || 0;
+        if (quantity > count && (!requiredShips.has(id) || requiredShips.get(id).quantity <= count)) {
+          const name = defs[id]?.name || `#${id}`;
+          issues.push(`${name}: ${quantity} selected, only ${count} available.`);
+        }
+      }
+      return issues;
     };
     const optimiseMiningFleet = () => {
       for (const id of miningShipIds || []) {
@@ -255,7 +291,9 @@ export async function editFleetDialog({
       if (excavatorEnabled && excavatorAvailable) {
         recommendedShips.push({ shipDefId: excavatorShipDefId, quantity: 1 });
       }
+      for (const id of miningShipIds || []) requiredShips.delete(id);
       for (const ship of recommendedShips) {
+        requiredShips.set(ship.shipDefId, { quantity: ship.quantity, label: 'Mining recommendation' });
         const quantity = Math.min(ship.quantity, avail[ship.shipDefId] || 0);
         const input = inputs.get(ship.shipDefId);
         if (quantity > 0) {
@@ -284,16 +322,20 @@ export async function editFleetDialog({
       name.textContent = def.name || `#${id}`;
       name.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
       const inp = document.createElement('input');
+      const avLbl = document.createElement('span');
       inp.type = 'number'; inp.min = '0'; inp.max = String(max); inp.value = String(state.get(id) || 0);
       inp.style.cssText = 'width:100%;background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:3px 6px;border-radius:6px;font-size:0.85rem;box-sizing:border-box';
       inp.addEventListener('change', () => {
         let v = parseInt(inp.value, 10); if (isNaN(v) || v < 0) v = 0;
-        if (v > max) v = max;
+        if (v > (avail[id] || 0)) v = avail[id] || 0;
         inp.value = String(v);
         if (v > 0) state.set(id, v); else state.delete(id);
+        if (requiredShips.has(id)) {
+          if (v > 0) requiredShips.set(id, { ...requiredShips.get(id), quantity: v });
+          else requiredShips.delete(id);
+        }
         refresh();
       });
-      const avLbl = document.createElement('span');
       avLbl.textContent = `/ ${max}`; avLbl.style.color = '#8b949e';
       line.append(iconCell, name, inp, avLbl);
       rows.append(line);
@@ -375,7 +417,35 @@ export async function editFleetDialog({
     }
     const done = (v) => { ov.remove(); resolve(v); };
     cancel.onclick = () => done(null);
-    ok.onclick = () => done(effective());
+    ok.onclick = async () => {
+      if (ok.disabled || confirming) return;
+      confirming = true;
+      availabilityError = '';
+      refresh();
+      try {
+        if (refreshAvailability) {
+          const result = await refreshAvailability();
+          if (result?.error) {
+            availabilityError = `Could not refresh ship availability: ${result.error}`;
+            return;
+          }
+          avail = result?.available || {};
+          for (const [id, input] of inputs) {
+            const count = avail[id] || 0;
+            input.max = String(count);
+            input.parentElement.lastChild.textContent = `/ ${count}`;
+          }
+        }
+        refresh();
+        if (validateFleet().length) return;
+        done(effective());
+      } catch (error) {
+        availabilityError = `Could not refresh ship availability: ${error.message}`;
+      } finally {
+        confirming = false;
+        if (ov.isConnected) refresh();
+      }
+    };
     ov.onclick = (e) => { if (e.target === ov) done(null); };
     refresh();
     if (recShips.length) {
@@ -405,7 +475,7 @@ export async function editFleetDialog({
         excavatorCheckbox.addEventListener('change', () => {
           excavatorEnabled = excavatorCheckbox.checked;
           localStorage.setItem('nx-af-excavator', excavatorEnabled ? '1' : '0');
-          if (autoOptimise) optimiseMiningFleet();
+          optimiseMiningFleet();
         });
         excavatorLabel.append(excavatorCheckbox, document.createTextNode('Excavator +20%'));
         miningOptions.append(excavatorLabel);
@@ -420,6 +490,7 @@ export async function editFleetDialog({
       if (autoOptimise) optimiseMiningFleet();
     }
     btns.append(cancel, ok);
+    box.append(validation);
     box.append(btns);
     ov.append(box);
     document.body.append(ov);

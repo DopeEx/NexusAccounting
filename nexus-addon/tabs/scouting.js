@@ -7,7 +7,7 @@
 // All routed through the game tab (same-origin) like the asteroid mine call.
 
 import { loadFleetTemplates } from './fleets.js';
-import { applySort, attachSortable, confirmDialog, fmtCountdown, fuelEstimate, missionProgress, rememberSelection, rememberedSelections, setStatusMessage, store, setStatusText, ZONE_COLORS, ZONE_DEFS } from '../common.js';
+import { applySort, attachSortable, confirmDialog, fmtCountdown, fuelEstimate, missionProgress, rememberSelection, rememberedSelections, setStatusMessage, setStatusText, ZONE_COLORS, ZONE_DEFS } from '../common.js';
 
 let inited = false;
 let scPlanets = [];          // [{ id, name, systemId, systemName }]
@@ -23,6 +23,7 @@ const scJustInvestigated = new Set(); // same, for investigate missions
 let scTick = 0;
 let scMissions = [];
 let scLastRefreshAt = null;
+let scRefreshPromise = null;
 let scUiTimer = null;
 let scoutingAutomationReady = false;
 let scoutingInitPromise = null;
@@ -61,6 +62,8 @@ export function resetScoutingTab() {
   scTick = 0;
   scMissions = [];
   scLastRefreshAt = null;
+  scRefreshPromise = null;
+  scCollecting.clear();
   scAutoScanRunning = false;
   scAutoInvestigateRunning = false;
   scAutoSalvageRunning = false;
@@ -317,6 +320,9 @@ async function initializeScoutingTab() {
     tickTimers();
     for (const k in scTicks) for (const upd of scTicks[k]) upd();   // advance all progress bars
     if (++scTick % 10 === 0) updateAvail();       // catch returning fleets
+    if (Date.now() - (scLastRefreshAt || 0) >= 30_000) {
+      refreshScoutingData().catch(error => console.error('[NexusAccounting] Scouting refresh failed:', error));
+    }
   }, 1000);
 
   setStatusText(status, '');
@@ -348,9 +354,17 @@ function setLastRefreshTimestamp() {
 }
 
 async function refreshScoutingData() {
-  await Promise.allSettled([loadActiveSurveys(), refreshDebris()]);
-  scLastRefreshAt = Date.now();
-  setLastRefreshTimestamp();
+  if (scRefreshPromise) return scRefreshPromise;
+  scRefreshPromise = (async () => {
+    await Promise.allSettled([loadActiveSurveys(), refreshDebris()]);
+    scLastRefreshAt = Date.now();
+    setLastRefreshTimestamp();
+  })();
+  try {
+    await scRefreshPromise;
+  } finally {
+    scRefreshPromise = null;
+  }
 }
 
 function getMaxMissions(type) {
@@ -616,7 +630,7 @@ async function automateDebris() {
       .map(field => ({ ...field, total: (field.ore || 0) + (field.silicates || 0) + (field.alloys || 0) }))
       .filter(field => field.debrisId != null && field.systemId != null && field.total > 0
         && (!field.expires || new Date(field.expires) > now)
-        && !inflight.has(field.systemId) && !scJustCollected.has(field.debrisId))
+        && !inflight.has(field.systemId))
       .sort((a, b) => b.total - a.total);
     if (!pending.length) { setStatusText(status, 'No uncollected debris to collect.'); return; }
 
@@ -799,6 +813,7 @@ async function loadActiveSurveys() {
     browser.runtime.sendMessage({ type: 'GET_MISSIONS' }),
   ]);
   if (res.error) { document.getElementById('sc-count').textContent = `Error: ${res.error}`; return; }
+  if (mi.error) { document.getElementById('sc-count').textContent = `Mission refresh failed: ${mi.error}`; return; }
   if (mi.maxFleetSlots != null) {
     const reserve = getReservedFleetSlots();
     document.getElementById('sc-slots').textContent = reserve > 0
@@ -807,6 +822,7 @@ async function loadActiveSurveys() {
   }
   scMissions = (mi.missions || []).filter(m => MISSION_LABELS[m.missionType]);
   renderTransit();
+  renderDebris();
   scInvestigating = new Set((mi.missions || [])
     .filter(m => m.missionType === 'investigate' && m.targetSystemId != null)
     .map(m => m.targetSystemId));
@@ -1136,8 +1152,7 @@ async function investigate(report) {
 // ── Live debris fields ─────────────────────────────────────────────────────
 
 let scDebris = [];   // live debris fields from the latest scrape
-const scJustCollected = new Set();   // debrisIds collected this session — keep the button disabled
-// systemId → { field, seenRun }: a field we launched a collection on, kept
+// systemId → { field, seenRun, sentAt }: a field we launched a collection on, kept
 // visible even while the game drops it from debris_fields mid-flight, so the
 // row doesn't flicker out. Dropped once its collect run finishes.
 const scCollecting = new Map();
@@ -1377,6 +1392,8 @@ async function refreshDebris() {
       console.warn('[NexusAccounting] Live debris refresh failed; using saved fields:', result.error);
       setStatusText(document.getElementById('sc-debris-status'),
         `Live refresh failed: ${result.error}. Showing saved fields.`, 'warning');
+    } else {
+      setStatusText(document.getElementById('sc-debris-status'), '');
     }
   } catch (error) {
     console.warn('[NexusAccounting] Live debris refresh failed; using saved fields:', error);
@@ -1398,9 +1415,11 @@ function renderDebris() {
   toggle.style.display = scHiddenDebris.size ? '' : 'none';
   toggle.textContent = scShowHidden ? `Hide hidden (${scHiddenDebris.size})` : `Show hidden (${scHiddenDebris.size})`;
 
-  // Systems with a collect fleet already in flight (persisted across reloads),
-  // so a field isn't offered for collection twice.
-  const collectingSystems = new Set((store.debris_active_runs || []).map(r => r.system_id).filter(v => v != null));
+  // Use the latest missions response, not the slower background snapshot.
+  const collectingSystems = new Set(scMissions
+    .filter(m => m.missionType === 'collect_debris')
+    .map(m => m.targetSystemId)
+    .filter(v => v != null));
 
   // Keep just-launched fields on screen through the window where the game has
   // dropped them from debris_fields but the collect run hasn't shown up yet.
@@ -1410,6 +1429,7 @@ function renderDebris() {
   for (const [sys, ent] of scCollecting) {
     if (collectingSystems.has(sys)) ent.seenRun = true;
     else if (ent.seenRun) { scCollecting.delete(sys); continue; }   // run finished → field collected
+    else if (Date.now() - ent.sentAt > 10_000) { scCollecting.delete(sys); continue; }
     if (!present.has(sys)) kept.push(ent.field);
   }
   const source = kept.length ? scDebris.concat(kept) : scDebris;
@@ -1496,12 +1516,13 @@ function renderDebris() {
     const action = document.createElement('div');
     action.className = 'sc-debris-action';
     const btn = document.createElement('button');
-    const busy = f.debrisId != null && (scJustCollected.has(f.debrisId) || (f.systemId != null && collectingSystems.has(f.systemId)));
+    const pending = f.systemId != null && scCollecting.has(f.systemId);
+    const busy = f.debrisId != null && (pending || (f.systemId != null && collectingSystems.has(f.systemId)));
     const ok = f.debrisId != null && !busy;
     btn.disabled = !ok;
     btn.className = ok ? 'sc-salvage-icon-btn sc-debris-icon-btn-launch' : 'sc-salvage-icon-btn sc-debris-icon-btn-disabled';
     btn.setAttribute('aria-label', busy ? 'Collecting' : ok ? 'Collect Debris' : 'Unavailable');
-    btn.title = busy ? 'Collecting…' : ok ? 'Collect Debris' : 'Unavailable';
+    btn.title = busy ? 'Collecting…' : ok ? 'Collect Debris' : 'Unavailable: no debris ID in the live data';
     if (ok) btn.addEventListener('click', () => collectDebris(f));
     action.appendChild(btn);
 
@@ -1675,8 +1696,7 @@ async function collectDebris(field, automated = false, filters = {}) {
     }
     setStatusText(status, msg, 'warning'); return 'error';
   }
-  scJustCollected.add(field.debrisId);
-  if (field.systemId != null) scCollecting.set(field.systemId, { field: { ...field }, seenRun: false });
+  if (field.systemId != null) scCollecting.set(field.systemId, { field: { ...field }, seenRun: false, sentAt: Date.now() });
   // Loot claimed — drop this system from the investigation history.
   if (field.systemId != null && scInvHistory.delete(field.systemId)) saveInvHistory();
   setStatusText(status, `Fleet sent to ${field.system} ✓`);

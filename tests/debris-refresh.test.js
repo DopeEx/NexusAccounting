@@ -4,7 +4,10 @@ import assert from 'node:assert/strict';
 import { loadBackground, makeBrowserStub } from './helpers.js';
 
 test('REFRESH_DEBRIS fetches live fields and updates the saved snapshot', async () => {
-  const store = makeBrowserStub({ system_zones: { A1: 'open' } });
+  const store = makeBrowserStub({
+    system_zones: { A1: 'open' },
+    debris_fields: [{ id: 'stale', debrisId: 4, systemId: 99, ore: 500 }],
+  });
   const requests = [];
   globalThis.browser.alarms.get = async () => null;
   globalThis.browser.tabs.query = async () => [{ id: 42, url: 'https://s0.nexuslegacy.space/' }];
@@ -32,6 +35,7 @@ test('REFRESH_DEBRIS fetches live fields and updates the saved snapshot', async 
   assert.deepEqual(response, { ok: true });
   assert.equal(requests[0].path, '/api/fleet/system-debris');
   assert.equal(store.debris_fields.length, 1);
+  assert.equal(store.debris_fields[0].id, '5');
   assert.equal(store.debris_fields[0].ore, 1000);
   assert.equal(store.debris_fields[0].zone, 'open');
 });
