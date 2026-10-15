@@ -366,6 +366,7 @@ async function runLiveSearchScan() {
     }
   } catch (err) {
     console.warn('[NexusOverseer] Live search failed:', err);
+    await setLsStatus({ state: 'error', error: String(err && err.message || err) });
   }
 }
 
@@ -400,6 +401,8 @@ const handleRuntimeMessage = async (msg, context = null) => {
   if (msg.type === 'GET_SHIP_DEFS') return getShipDefs();
   if (msg.type === 'GET_PLANET_SHIPS') return getPlanetShips(msg.planetId);
   if (msg.type === 'GET_MISSIONS') return apiGet('/api/fleet/missions');
+  if (msg.type === 'GET_PIRATE_CAMPS') return apiGet(PIRATE_CAMPS_PATH);
+  if (msg.type === 'GET_PIRATE_REPORTS') return apiGet(PIRATES_PATH);
   if (msg.type === 'REFRESH_DEBRIS') return refreshDebris();
   if (msg.type === 'GET_FUEL_ESTIMATE') {
     // POST: routed through the game tab (same-origin) — a Bearer POST from the
@@ -447,9 +450,6 @@ const handleRuntimeMessage = async (msg, context = null) => {
       sourcePlanetId: msg.sourcePlanetId, ships: msg.ships, zone: msg.zone, depth: msg.depth,
     });
   }
-  if (msg.type === 'SEND_XENO_SURVEY') {
-    return gamePost('/api/fleet/xeno-survey', {
-      sourcePlanetId: msg.sourcePlanetId, targetMoonId: msg.targetMoonId, ships: msg.ships,
   if (msg.type === 'SEND_SCOUT_CAMP') {
     return gamePost('/api/fleet/scout-camp', {
       sourcePlanetId: msg.sourcePlanetId, campId: msg.campId, ships: msg.ships,
@@ -461,6 +461,9 @@ const handleRuntimeMessage = async (msg, context = null) => {
       hangarAssignments: {},
     });
   }
+  if (msg.type === 'SEND_XENO_SURVEY') {
+    return gamePost('/api/fleet/xeno-survey', {
+      sourcePlanetId: msg.sourcePlanetId, targetMoonId: msg.targetMoonId, ships: msg.ships,
       hangarAssignments: {},
     });
   }
@@ -804,6 +807,11 @@ async function apiFetch(path, { polite = false } = {}) {
     if ((status === 429 || status >= 500) && attempt < maxAttempts) {
       const retryAfter = parseFloat(r.retryAfter);
       const waitMs = Number.isFinite(retryAfter) ? Math.max(0, retryAfter * 1000) : delayMs;
+      if (status === 429) {
+        // Budget is exhausted: make every other caller wait for the window too.
+        rlRemaining = 0;
+        rlResetAt = Math.max(rlResetAt, Date.now() + waitMs);
+      }
       await new Promise(res => setTimeout(res, waitMs));
       delayMs *= 2;
       continue;

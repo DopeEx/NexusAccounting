@@ -46,6 +46,9 @@ body.expert-mode .expert-only { display: block !important; }
 body.expert-mode .asteroids-toolbar.expert-only { display: flex !important; }
 body.expert-mode button.expert-only,
 body.expert-mode .tabs .expert-only { display: inline-block !important; }
+body.expert-mode .panel-toolbar.expert-only { display: flex !important; }
+.panel-toolbar.pc-auto-box { flex-direction: column; align-items: stretch; gap: 8px; }
+.pc-auto-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
 
 .tabs {
   --nav-accent: #38bdf8;
@@ -97,6 +100,7 @@ body.expert-mode .tabs .expert-only { display: inline-block !important; }
 .main-tab[data-tab="scouting"]::before { content: "◉"; }
 .main-tab[data-tab="asteroids"]::before { content: "✦"; }
 .main-tab[data-tab="expeditions"]::before { content: "↗"; }
+.main-tab[data-tab="pirates"]::before { content: "☠"; }
 .main-tab[data-tab="xeno"]::before { content: "◇"; }
 .main-tab[data-tab="fleets"]::before { content: "▤"; }
 .main-tab[data-tab="finder"]::before { content: "⌕"; }
@@ -1878,6 +1882,106 @@ th.sortable .arrow { margin-left: 4px; color: #58a6ff; }
   font-size: 0.75rem;
   font-weight: 600;
   line-height: 1.1;
+}
+
+.sc-debris-meta-grid.pc-meta-grid {
+  grid-template-columns:
+    minmax(0, 1.3fr)
+    minmax(0, 0.8fr)
+    minmax(0, 0.7fr)
+    minmax(0, 0.8fr)
+    minmax(0, 0.7fr)
+    minmax(0, 0.5fr)
+    minmax(0, 1fr)
+    minmax(0, 1.2fr)
+    minmax(0, 2fr)
+    minmax(0, 0.7fr);
+}
+
+.pc-icon-btn {
+  width: 23px;
+  height: 23px;
+  border-radius: 7px;
+  border: 1px solid #404b93;
+  background: linear-gradient(180deg, #191b3a 0%, #12162f 100%);
+  color: #7585ff;
+  cursor: pointer;
+  position: relative;
+  box-sizing: border-box;
+  padding: 0;
+  display: block;
+}
+
+.pc-icon-btn:hover:not(:disabled) {
+  border-color: #5167c9;
+  color: #94a4ff;
+}
+
+.pc-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.pc-icon-btn:focus-visible {
+  outline: 1px solid #6b7ef0;
+  outline-offset: 2px;
+}
+
+.pc-icon-btn + .pc-icon-btn {
+  margin-top: 6px;
+}
+
+.pc-btn-scout::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+.pc-btn-scout::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  top: 13px;
+  width: 6px;
+  height: 1.5px;
+  background: currentColor;
+  transform: rotate(45deg);
+  transform-origin: left center;
+  border-radius: 999px;
+}
+
+.pc-btn-attack::before {
+  content: "⚔";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+}
+
+@media (max-width: 900px) {
+  .sc-debris-meta-grid.pc-meta-grid {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+}
+
+.pc-card-fleet {
+  display: block;
+  color: #8b949e;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sc-transit-track {
