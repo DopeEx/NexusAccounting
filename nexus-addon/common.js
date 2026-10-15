@@ -690,7 +690,14 @@ export function missionProgress(m) {
   const rdep = g('returnDepartsAt'), rarr = g('returnArrivesAt');
   const work = MISSION_WORK_LABEL[m.missionType] || 'Working';
   const stages = [];
-  if (dep && arr) stages.push(['Outbound', MISSION_STAGE_COLOR.outbound, MISSION_STAGE_GRADIENT.outbound, dep, arr]);
+  // An exploring expedition reports the end of the exploration in `arrivesAt`;
+  // the actual arrival is departure + travelTime.
+  const travelMs = Number(m.travelTime) * 1000;
+  if (m.status === 'exploring' && dep && arr && travelMs > 0 && dep + travelMs < arr) {
+    const landed = dep + travelMs;
+    stages.push(['Outbound', MISSION_STAGE_COLOR.outbound, MISSION_STAGE_GRADIENT.outbound, dep, landed]);
+    stages.push([work, MISSION_WORK_COLOR[m.missionType] || '#47d4ff', MISSION_WORK_GRADIENT[m.missionType], landed, arr]);
+  } else if (dep && arr) stages.push(['Outbound', MISSION_STAGE_COLOR.outbound, MISSION_STAGE_GRADIENT.outbound, dep, arr]);
   if (arr && rdep) stages.push([work, MISSION_WORK_COLOR[m.missionType] || '#47d4ff', MISSION_WORK_GRADIENT[m.missionType], arr, rdep]);
   if (rdep && rarr) stages.push(['Returning', MISSION_STAGE_COLOR.returning, MISSION_STAGE_GRADIENT.returning, rdep, rarr]);
   for (const [label, color, gradient, s, e] of stages) {
