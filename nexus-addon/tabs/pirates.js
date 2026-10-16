@@ -227,21 +227,24 @@ async function automatePirateAttacks() {
       setStatusText(autoStatus, `Cannot attack: ${pcSlots.used}/${pcSlots.max} fleet slots in use.`, 'warning');
       return;
     }
-    const planetId = Number(document.getElementById('pc-planet').value);
-    if (!planetId) { setStatusText(autoStatus, 'Select a planet first.'); return; }
+    if (!pcPlanets.length) { setStatusText(autoStatus, 'Select a planet first.'); return; }
     const targets = pcCamps
       .filter(c => campReadyToAttack(c) && !busy.has(c.id))
       .sort((a, b) => (a.systemName || '').localeCompare(b.systemName || ''))
       .slice(0, 3);
     if (!targets.length) { setStatusText(autoStatus, 'No scouted camps to attack.'); return; }
 
-    const av = await browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId });
-    if (av.error) { setStatusText(autoStatus, `Error: ${av.error}`); return; }
     setStatusText(autoStatus, 'Calculating attack fleet…');
     let lastError = '';
+    const shipsCache = new Map();
     for (const target of targets) {
-      const plan = await suggestAttackFleet(target, av.available, attackPlannerOptions());
-      if (plan.error) { lastError = `${target.name}: ${plan.error}`; continue; }
+      const pick = await pickSourcePlanet(target, async available => {
+        const plan = await suggestAttackFleet(target, available, attackPlannerOptions());
+        return plan;
+      }, shipsCache);
+      if (pick.error) { lastError = `${target.name}: ${pick.error}`; continue; }
+      const { planet: source, result: plan } = pick;
+      const planetId = source.id;
       const ships = Object.entries(plan.ships).map(([id, quantity]) => ({ shipDefId: Number(id), quantity }));
       const res = await browser.runtime.sendMessage({
         type: 'SEND_ATTACK_PIRATES', sourcePlanetId: planetId, campId: target.id, ships,
@@ -255,7 +258,7 @@ async function automatePirateAttacks() {
         return;
       }
       pcJustAttacked.set(target.id, Date.now());
-      setStatusText(autoStatus, `Attack sent to ${target.name} ✓ — ${plan.note.split('\n')[0]}`);
+      setStatusText(autoStatus, `Attack sent to ${target.name} from ${source.name} ✓ — ${plan.note.split('\n')[0]}`);
       await refreshPirateMissions();
       return;
     }
@@ -290,21 +293,18 @@ async function automatePirateScouting() {
       setStatusText(autoStatus, `Cannot scout: ${pcSlots.used}/${pcSlots.max} fleet slots in use.`, 'warning');
       return;
     }
-    const planetId = Number(document.getElementById('pc-planet').value);
-    const planet = pcPlanets.find(p => p.id === planetId);
     const target = pcCamps
       .filter(c => campNeedsScout(c) && !busy.has(c.id))
       .sort((a, b) => (a.systemName || '').localeCompare(b.systemName || ''))[0];
     if (!target) { setStatusText(autoStatus, 'No camps need scouting.'); return; }
-    if (!planetId) { setStatusText(autoStatus, 'Select a planet first.'); return; }
 
-    const av = await browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId });
-    if (av.error) { setStatusText(autoStatus, `Error: ${av.error}`); return; }
-    const r = scoutTemplateShips(av.available);
-    if (r.error) { setStatusText(autoStatus, r.error); return; }
+    const pick = await pickSourcePlanet(target, available => scoutTemplateShips(available));
+    if (pick.error) { setStatusText(autoStatus, pick.error); return; }
+    const planetId = pick.planet.id;
+    const planet = pick.planet;
 
     const res = await browser.runtime.sendMessage({
-      type: 'SEND_SCOUT_CAMP', sourcePlanetId: planetId, campId: target.id, ships: r.ships,
+      type: 'SEND_SCOUT_CAMP', sourcePlanetId: planetId, campId: target.id, ships: pick.result.ships,
     });
     if (res.error) {
       if (String(res.error).includes('Human verification')) {
@@ -375,6 +375,13 @@ async function initPirateCamps() {
   for (const id of ['pc-scout-template', 'pc-attack-template']) {
     document.getElementById(id).addEventListener('change', e => rememberSelection(id, e.target.value));
   }
+  const nearestBox = document.getElementById('pc-nearest');
+  nearestBox.checked = saved['pc-nearest'] === true;
+  nearestBox.addEventListener('change', e => {
+    rememberSelection('pc-nearest', e.target.checked);
+    sel.disabled = e.target.checked;
+  });
+  sel.disabled = nearestBox.checked;
   await refreshPirateTemplates();
   browser.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes.fleet_templates) refreshPirateTemplates();
@@ -439,26 +446,80 @@ function scoutTemplateShips(available) {
   return { ships };
 }
 
+let pcSystems = null;
+
+async function loadPirateSystems() {
+  if (pcSystems) return pcSystems;
+  const map = await browser.runtime.sendMessage({ type: 'GET_GALAXY_MAP' });
+  if (map.error) return {};
+  pcSystems = {};
+  for (const s of (map.systems || [])) pcSystems[s.id] = { x: s.x, y: s.y };
+  return pcSystems;
+}
+
+// Planets to launch from, in order of preference: with "Nearest planet" on, all
+// owned planets by straight-line distance to the camp; otherwise the selected one.
+async function sourceCandidates(camp) {
+  const selected = pcPlanets.find(p => p.id === Number(document.getElementById('pc-planet').value));
+  if (!document.getElementById('pc-nearest').checked) return selected ? [selected] : [];
+  const systems = await loadPirateSystems();
+  const target = systems[camp.systemId];
+  if (!target) return selected ? [selected] : [];
+  const dist = p => {
+    const s = systems[p.systemId];
+    return s ? Math.hypot(s.x - target.x, s.y - target.y) : Infinity;
+  };
+  return pcPlanets.filter(p => p.systemId != null).sort((a, b) => dist(a) - dist(b));
+}
+
+// First candidate planet whose ships satisfy `check(available)` (returns an object
+// with `error` when unsuitable). Resolves to { planet, av, result } or { error }.
+async function pickSourcePlanet(camp, check, shipsCache = new Map()) {
+  const candidates = await sourceCandidates(camp);
+  if (!candidates.length) return { error: 'Select a planet first.' };
+  let firstError = '';
+  for (const planet of candidates) {
+    let av = shipsCache.get(planet.id);
+    if (!av) {
+      av = await browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId: planet.id });
+      shipsCache.set(planet.id, av);
+    }
+    if (av.error) { firstError ||= av.error; continue; }
+    const result = await check(av.available, planet);
+    if (!result.error) return { planet, av, result };
+    firstError ||= result.error;
+  }
+  return { error: firstError || 'No suitable planet found.' };
+}
+
+function attackShipsPresent(available) {
+  const { allowedShipIds } = attackPlannerOptions();
+  const ids = allowedShipIds || Object.keys(available);
+  return ids.some(id => (available[id] || 0) > 0)
+    ? {}
+    : { error: 'No suitable ships on this planet.' };
+}
+
 async function sendCampFleet(camp, { title, messageType, doneText, useTemplate }) {
   const status = document.getElementById('pc-status');
-  const planetId = Number(document.getElementById('pc-planet').value);
-  const planet = pcPlanets.find(p => p.id === planetId);
-  if (!planetId) { setStatusText(status, 'Select a planet first.'); return; }
-  const av = await browser.runtime.sendMessage({ type: 'GET_PLANET_SHIPS', planetId });
-  if (av.error) { setStatusText(status, av.error); return; }
+  const isAttack = messageType === 'SEND_ATTACK_PIRATES';
+  const pick = await pickSourcePlanet(camp, available => (useTemplate
+    ? scoutTemplateShips(available)
+    : (isAttack ? attackShipsPresent(available) : {})));
+  if (pick.error) { setStatusText(status, pick.error); return; }
+  const { planet, av } = pick;
+  const planetId = planet.id;
 
   let ships;
   if (useTemplate) {
-    const r = scoutTemplateShips(av.available);
-    if (r.error) { setStatusText(status, r.error); return; }
-    ships = r.ships;
+    ships = pick.result.ships;
   } else {
-    const planner = messageType === 'SEND_ATTACK_PIRATES'
+    const planner = isAttack
       ? { label: 'Calculate fleet', run: () => suggestAttackFleet(camp, av.available, attackPlannerOptions()) }
       : null;
     ships = await editFleetDialog({
       title,
-      subtitle: `From: ${planet ? planet.name : planetId}\nCamp: ${camp.name} (${camp.systemName})`,
+      subtitle: `From: ${planet.name}${document.getElementById('pc-nearest').checked ? ' (nearest)' : ''}\nCamp: ${camp.name} (${camp.systemName})`,
       avail: av.available, planner,
     });
   }
