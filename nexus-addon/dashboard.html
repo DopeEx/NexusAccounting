@@ -219,6 +219,10 @@
           <span class="toolbar-label">Scout template</span>
           <select id="pc-scout-template" class="toolbar-select"></select>
         </label>
+        <label class="toolbar-field">
+          <span class="toolbar-label">Attack ships</span>
+          <select id="pc-attack-template" class="toolbar-select"></select>
+        </label>
       </div>
       <div class="toolbar-row toolbar-row-meta">
         <span id="pc-status" class="toolbar-meta-text"></span>
@@ -230,7 +234,7 @@
         <span id="pc-count" class="mission-count"></span>
         <button id="pc-refresh" class="toolbar-button secondary-button">Refresh</button>
       </div>
-      <div class="panel-toolbar expert-only pc-auto-box">
+      <div class="panel-toolbar pc-auto-box">
         <div class="pc-auto-row">
           <input type="checkbox" id="pc-auto" class="m-switch" title="Automate camp scouting">
           <span class="panel-toolbar-label">Automate Scouting</span>
@@ -239,7 +243,7 @@
           </label>
           <span id="pc-auto-status" class="panel-toolbar-status">Status: -</span>
         </div>
-        <div class="pc-auto-row">
+        <div class="pc-auto-row expert-only">
           <input type="checkbox" id="pc-auto-attack" class="m-switch" title="Automate camp attacks">
           <span class="panel-toolbar-label">Automate Attacks</span>
           <label class="panel-toolbar-field" title="Maximum number of attack fleets in flight">Max fleets

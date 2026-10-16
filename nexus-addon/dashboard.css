@@ -47,6 +47,7 @@ body.expert-mode .asteroids-toolbar.expert-only { display: flex !important; }
 body.expert-mode button.expert-only,
 body.expert-mode .tabs .expert-only { display: inline-block !important; }
 body.expert-mode .panel-toolbar.expert-only { display: flex !important; }
+body.expert-mode .pc-auto-row.expert-only { display: flex !important; }
 .panel-toolbar.pc-auto-box { flex-direction: column; align-items: stretch; gap: 8px; }
 .pc-auto-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
 
