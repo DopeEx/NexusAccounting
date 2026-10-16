@@ -240,7 +240,7 @@ async function automatePirateAttacks() {
     setStatusText(autoStatus, 'Calculating attack fleet…');
     let lastError = '';
     for (const target of targets) {
-      const plan = await suggestAttackFleet(target, av.available);
+      const plan = await suggestAttackFleet(target, av.available, attackPlannerOptions());
       if (plan.error) { lastError = `${target.name}: ${plan.error}`; continue; }
       const ships = Object.entries(plan.ships).map(([id, quantity]) => ({ shipDefId: Number(id), quantity }));
       const res = await browser.runtime.sendMessage({
@@ -372,8 +372,9 @@ async function initPirateCamps() {
   const saved = await rememberedSelections();
   if (saved['pc-planet'] && pcPlanets.some(p => String(p.id) === saved['pc-planet'])) sel.value = saved['pc-planet'];
   sel.addEventListener('change', e => rememberSelection('pc-planet', e.target.value));
-  document.getElementById('pc-scout-template')
-    .addEventListener('change', e => rememberSelection('pc-scout-template', e.target.value));
+  for (const id of ['pc-scout-template', 'pc-attack-template']) {
+    document.getElementById(id).addEventListener('change', e => rememberSelection(id, e.target.value));
+  }
   await refreshPirateTemplates();
   browser.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes.fleet_templates) refreshPirateTemplates();
@@ -391,9 +392,21 @@ async function refreshPirateTemplates() {
   pcTemplates = await loadFleetTemplates();
   pcTemplates.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   const sel = document.getElementById('pc-scout-template');
+  const atkSel = document.getElementById('pc-attack-template');
   const saved = await rememberedSelections();
   const want = saved['pc-scout-template'] || sel.value;
+  const wantAtk = saved['pc-attack-template'] ?? atkSel.value;
   sel.textContent = '';
+  atkSel.textContent = '';
+  const all = document.createElement('option');
+  all.value = ''; all.textContent = 'All ships (strongest)';
+  atkSel.appendChild(all);
+  for (const t of pcTemplates) {
+    const o = document.createElement('option');
+    o.value = t.id; o.textContent = t.name;
+    atkSel.appendChild(o);
+  }
+  if (wantAtk && pcTemplates.some(t => String(t.id) === wantAtk)) atkSel.value = wantAtk;
   if (!pcTemplates.length) {
     const o = document.createElement('option');
     o.value = ''; o.textContent = '— none (create in Fleet Templates) —';
@@ -406,6 +419,14 @@ async function refreshPirateTemplates() {
     sel.appendChild(o);
   }
   if (want && pcTemplates.some(t => String(t.id) === want)) sel.value = want;
+}
+
+// A chosen template only releases ship types (quantity ≥ 1); the planner picks the count.
+function attackPlannerOptions() {
+  const tpl = pcTemplates.find(t => String(t.id) === document.getElementById('pc-attack-template').value);
+  if (!tpl) return {};
+  const ids = Object.entries(tpl.ships || {}).filter(([, q]) => Number(q) >= 1).map(([id]) => id);
+  return ids.length ? { allowedShipIds: ids } : {};
 }
 
 function scoutTemplateShips(available) {
@@ -433,7 +454,7 @@ async function sendCampFleet(camp, { title, messageType, doneText, useTemplate }
     ships = r.ships;
   } else {
     const planner = messageType === 'SEND_ATTACK_PIRATES'
-      ? { label: 'Calculate fleet', run: () => suggestAttackFleet(camp, av.available) }
+      ? { label: 'Calculate fleet', run: () => suggestAttackFleet(camp, av.available, attackPlannerOptions()) }
       : null;
     ships = await editFleetDialog({
       title,
