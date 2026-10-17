@@ -225,8 +225,8 @@ function empireCard(d) {
 
   const list = el('div', 'ov-kv-row ov-empire');
   list.append(
-    kv('Colonies', fmt(d.planets.length)),
-    kv('Moons', fmt(d.moons?.length || 0)),
+    kv('Colonies', d.slots ? `${fmt(d.planets.length)} / ${fmt(d.slots.colonies)}` : fmt(d.planets.length)),
+    kv('Moons', d.slots ? `${fmt(d.moons?.length || 0)} / ${fmt(d.slots.moons)}` : fmt(d.moons?.length || 0)),
     kv('Ships', `${fmt(hangar + flying)} (${fmt(hangar)} docked · ${fmt(flying)} flying)`),
   );
   if (popMax) list.appendChild(kv('Population', `${fmt(sum(d.planets, p => p.population))} / ${fmt(popMax)}`));

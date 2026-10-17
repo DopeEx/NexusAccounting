@@ -1095,8 +1095,24 @@ async function getDashboardOverview({ polite = true } = {}) {
       ships: (m.fleetComposition || []).reduce((s, f) => s + (f.quantity || 0), 0),
     }));
 
+    // Colony and moon limits come from the colony-status endpoints; the research
+    // effect sums are only a fallback (they omit the base value for colonies).
+    const slots = { colonies: 0, moons: 0 };
+    for (const r of (researchData.research || [])) {
+      for (const e of (r.effects || [])) {
+        if (e.type === 'colony_slots') slots.colonies += (e.value || 0) * (r.level || 0);
+        if (e.type === 'moon_slots') slots.moons += (e.slots || 0) * (r.level || 0);
+      }
+    }
+    const [moonStatus, colonyStatus] = await Promise.all([
+      apiFetch('/api/moons/colony-status', opts).catch(() => null),
+      apiFetch('/api/galaxy/colony-status', opts).catch(() => null),
+    ]);
+    if (Number.isFinite(moonStatus?.maxMoons)) slots.moons = moonStatus.maxMoons;
+    if (Number.isFinite(colonyStatus?.maxColonies)) slots.colonies = colonyStatus.maxColonies;
+
     return {
-      planets, moons, research, missions,
+      planets, moons, research, missions, slots,
       maxFleetSlots: missionsData.maxFleetSlots ?? null,
       researchSlots: planets.filter(p => p.hasLab).length,
       fetchedAt: now,
