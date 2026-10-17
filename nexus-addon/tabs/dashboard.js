@@ -131,6 +131,7 @@ function missionStage(m) {
 
 function missionsCard(d) {
   const card = section('Active Missions');
+  card.classList.add('ov-missions');
   const missions = d.missions;
   const etas = missions.map(missionEta).filter(Boolean).sort((a, b) => a - b);
   card.appendChild(kv('Total active', String(missions.length)));
@@ -175,36 +176,9 @@ function missionsCard(d) {
   return card;
 }
 
-function researchCard(d) {
-  const card = section('Research');
-  card.appendChild(kv('Running', `${d.research.length} / ${d.researchSlots}`));
-  if (!d.research.length) {
-    card.appendChild(idle('Research idle', 'No research is currently running.'));
-    return card;
-  }
-  const list = el('div', 'ov-list');
-  for (const r of d.research) {
-    const row = el('div', 'ov-row');
-    const name = el('span', 'ov-row-name', r.name);
-    if (r.level != null) name.appendChild(el('span', 'ov-dim', ` Lv.${r.level}`));
-    if (r.planetName) name.appendChild(el('span', 'ov-dim', ` · ${r.planetName}`));
-    row.append(name, countdown(r.endsAt));
-    list.appendChild(row);
-  }
-  card.appendChild(list);
-  return card;
-}
-
-function empireCard(d) {
-  const card = section('Empire Status');
-  const hangar = [...d.planets, ...(d.moons || [])].reduce((s, p) => s + p.fleet.total, 0);
-  const flying = d.missions.reduce((s, m) => s + m.ships, 0);
-  const all = [...d.planets, ...(d.moons || [])];
-  const sum = (list, f) => list.reduce((s, p) => s + (f(p) || 0), 0);
-  const withSlots = all.filter(p => p.buildSlots?.max != null);
-  const queued = d.planets.filter(p => p.queueMax != null);
-  const fullList = [];
-  for (const p of all) {
+function storageWarnings(d) {
+  const out = [];
+  for (const p of [...d.planets, ...(d.moons || [])]) {
     const near = [];
     for (const [key, label] of RES_KEYS) {
       const cap = p.resources[`${key}Storage`];
@@ -217,30 +191,94 @@ function empireCard(d) {
       }
     }
     for (const [label, have, cap] of near) {
-      fullList.push(`${p.name}${p.isMoon ? ' (moon)' : ''} · ${label}: ${Math.floor(have / cap * 100)}% (${fmt(have)} / ${fmt(cap)})`);
+      out.push({ name: `${p.name}${p.isMoon ? ' (moon)' : ''}`, text: `${label}: ${Math.floor(have / cap * 100)}% (${fmt(have)} / ${fmt(cap)})` });
     }
   }
-  const full = new Set(fullList.map(s => s.split(' · ')[0])).size;
-  const popMax = sum(d.planets, p => p.maxPopulation);
+  return out;
+}
 
-  const list = el('div', 'ov-kv-row ov-empire');
-  list.append(
-    kv('Colonies', d.slots ? `${fmt(d.planets.length)} / ${fmt(d.slots.colonies)}` : fmt(d.planets.length)),
-    kv('Moons', d.slots ? `${fmt(d.moons?.length || 0)} / ${fmt(d.slots.moons)}` : fmt(d.moons?.length || 0)),
-    kv('Ships', `${fmt(hangar + flying)} (${fmt(hangar)} docked · ${fmt(flying)} flying)`),
-  );
-  if (popMax) list.appendChild(kv('Population', `${fmt(sum(d.planets, p => p.population))} / ${fmt(popMax)}`));
-  if (withSlots.length) list.appendChild(kv('Building slots', `${sum(withSlots, p => p.buildSlots.used)}/${sum(withSlots, p => p.buildSlots.max)}`));
-  if (queued.length) {
-    const busy = queued.filter(p => p.construction.length).length;
-    list.appendChild(kv('Planets building', `${busy}/${queued.length}`, busy < queued.length ? 'ov-warn' : ''));
+// Things that may need the player's action; an entry only appears when it applies.
+function attentionItems(d) {
+  const items = [];
+  const busyLabs = new Set(d.research.map(r => r.planetId));
+  const idleLabs = d.planets.filter(p => p.hasLab && !busyLabs.has(p.id));
+  if (idleLabs.length) {
+    items.push({ level: 'warn', text: `${idleLabs.length} research lab${idleLabs.length > 1 ? 's' : ''} idle`, tip: idleLabs.map(p => p.name) });
   }
-  const fullRow = kv('Storage almost full', fmt(full), full ? 'ov-warn' : '');
-  if (fullList.length) fullRow.title = fullList.join('\n');
-  list.appendChild(fullRow);
-  card.appendChild(list);
+  const noBuild = d.planets.filter(p => p.queueMax != null && !p.construction.length);
+  if (noBuild.length) {
+    items.push({ level: 'warn', text: `${noBuild.length} planet${noBuild.length > 1 ? 's' : ''} without construction`, tip: noBuild.map(p => p.name) });
+  }
+  const full = storageWarnings(d);
+  if (full.length) {
+    const places = new Set(full.map(f => f.name)).size;
+    items.push({ level: 'error', text: `Storage almost full on ${places} location${places > 1 ? 's' : ''}`, tip: full.map(f => `${f.name} � ${f.text}`) });
+  }
+  const hurt = [...d.planets, ...(d.moons || [])].filter(p => p.damaged?.length);
+  if (hurt.length) {
+    const count = hurt.reduce((s, p) => s + p.damaged.reduce((n, x) => n + x.quantity, 0), 0);
+    items.push({
+      level: 'warn',
+      text: `${count} damaged ship${count > 1 ? 's' : ''} need repair`,
+      tip: hurt.flatMap(p => p.damaged.map(x => `${p.name}${p.isMoon ? ' (moon)' : ''} · ${x.quantity}× ${x.name}`)),
+    });
+  }
+  if (d.commander?.missingHull > 0) {
+    const c = d.commander;
+    items.push({ level: 'warn', text: 'Command ship needs repair', tip: [`${c.callsign || 'Command ship'}: ${fmt(c.missingHull)} / ${fmt(c.maxHull)} hull missing`] });
+  }
+  if (d.commander?.talentPoints) {
+    items.push({ level: 'warn', text: `${d.commander.talentPoints} unspent talent point${d.commander.talentPoints > 1 ? 's' : ''}`, tip: [d.commander.callsign].filter(Boolean) });
+  }
+  return items;
+}
+
+function attentionCard(d) {
+  const items = attentionItems(d);
+  if (!items.length) return null;
+  const card = section('Needs attention');
+  card.classList.add('ov-attention');
+  const chips = el('div', 'ov-chips');
+  for (const it of items) {
+    const chip = el('span', `ov-chip ${it.level === 'error' ? 'bad' : 'warn'}`, it.text);
+    if (it.tip?.length) chip.title = it.tip.join('\n');
+    chips.appendChild(chip);
+  }
+  card.appendChild(chips);
   return card;
 }
+
+// Empire-wide figures as a tile strip in the same style as the total resources.
+function empireStrip(d) {
+  const all = [...d.planets, ...(d.moons || [])];
+  const hangar = all.reduce((s, p) => s + p.fleet.total, 0);
+  const flying = d.missions.reduce((s, m) => s + m.ships, 0);
+  const sum = (list, f) => list.reduce((s, p) => s + (f(p) || 0), 0);
+  const withSlots = all.filter(p => p.buildSlots?.max != null);
+  const popMax = sum(d.planets, p => p.maxPopulation);
+  const limit = (n, max) => (d.slots ? `${fmt(n)} / ${fmt(max)}` : fmt(n));
+
+  const tile = (label, value, sub) => {
+    const card = el('div', 'stat-card ov-empire-tile');
+    card.append(el('div', 'label', label), el('div', 'value', value));
+    if (sub) card.appendChild(el('div', 'ov-dim ov-res-rate', sub));
+    return card;
+  };
+  const row = el('div', 'stats ov-stats');
+  row.append(
+    tile('Colonies', limit(d.planets.length, d.slots?.colonies)),
+    tile('Moons', limit(d.moons?.length || 0, d.slots?.moons)),
+    tile('Ships', fmt(hangar + flying), `${fmt(hangar)} docked · ${fmt(flying)} flying`),
+  );
+  if (popMax) row.appendChild(tile('Population', `${fmt(sum(d.planets, p => p.population))} / ${fmt(popMax)}`));
+  if (withSlots.length) row.appendChild(tile('Building slots', `${sum(withSlots, p => p.buildSlots.used)} / ${sum(withSlots, p => p.buildSlots.max)}`));
+  row.style.setProperty('--n', row.children.length);
+  const panel = section('Empire Status');
+  panel.classList.add('ov-empire-strip');
+  panel.appendChild(row);
+  return panel;
+}
+
 
 function planetCard(p, research) {
   const card = el('section', 'dashboard-panel ov-planet');
@@ -451,10 +489,10 @@ function render() {
   }
 
   host.appendChild(totalsPanel(data));
-
-  const top = el('div', 'ov-top');
-  top.append(missionsCard(data), researchCard(data), empireCard(data));
-  host.appendChild(top);
+  host.appendChild(empireStrip(data));
+  const attention = attentionCard(data);
+  if (attention) host.appendChild(attention);
+  host.appendChild(missionsCard(data));
 
   const grid = el('div', 'ov-planets');
   for (const p of [...data.planets, ...(data.moons || [])]) grid.appendChild(planetCard(p, data.research));

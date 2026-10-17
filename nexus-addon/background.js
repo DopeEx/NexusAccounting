@@ -954,6 +954,20 @@ function makeShipYard(label, exists, queue, max, future) {
   return { label, exists, max: max ?? 3, items };
 }
 
+// Damaged hangar ships (broken drills included) that are not already in a repair job.
+function damagedShips(fleet, shipYards) {
+  const repairing = {};
+  for (const y of shipYards) for (const it of y.items) if (it.repair) repairing[it.name] = (repairing[it.name] || 0) + it.quantity;
+  const out = [];
+  for (const f of (fleet || [])) {
+    const name = f.definition?.name || f.definition?.key || 'Ship';
+    const left = (f.damagedQuantity || 0) - (repairing[name] || 0);
+    if (left > 0) out.push({ name, quantity: left });
+    if (repairing[name]) repairing[name] = Math.max(0, repairing[name] - (f.damagedQuantity || 0));
+  }
+  return out;
+}
+
 async function getDashboardOverview({ polite = true } = {}) {
   const opts = { polite };
   try {
@@ -1022,6 +1036,7 @@ async function getDashboardOverview({ polite = true } = {}) {
         construction,
         queueMax: detail?.buildQueueMax ?? null,
         shipYards,
+        damaged: damagedShips(fleetData?.fleet, shipYards),
         fleet: { total: totalShips, classes },
       });
     }
@@ -1043,6 +1058,7 @@ async function getDashboardOverview({ polite = true } = {}) {
         classes[cls] = (classes[cls] || 0) + q;
         totalShips += q;
       }
+      const moonYards = [makeShipYard('Moon dockyard', (fl?.dockyardLevel || 0) > 0 || (fl?.queueAll || []).length > 0, fl?.queueAll, fl?.maxQueueSize, future)];
       moons.push({
         id: mid,
         name: mo.name || `Moon #${mid}`,
@@ -1066,7 +1082,8 @@ async function getDashboardOverview({ polite = true } = {}) {
           .filter(b => b.isUpgrading && future(b.upgradeEndsAt))
           .map(b => ({ name: b.name || b.key || 'Building', level: b.queueTargetLevel || (b.level || 0) + 1, endsAt: b.upgradeEndsAt }))
           .sort((a, b) => new Date(a.endsAt) - new Date(b.endsAt)),
-        shipYards: [makeShipYard('Moon dockyard', (fl?.dockyardLevel || 0) > 0 || (fl?.queueAll || []).length > 0, fl?.queueAll, fl?.maxQueueSize, future)],
+        shipYards: moonYards,
+        damaged: damagedShips(fl?.fleet, moonYards),
         fleet: { total: totalShips, classes },
       });
     }
@@ -1111,8 +1128,18 @@ async function getDashboardOverview({ polite = true } = {}) {
     if (Number.isFinite(moonStatus?.maxMoons)) slots.moons = moonStatus.maxMoons;
     if (Number.isFinite(colonyStatus?.maxColonies)) slots.colonies = colonyStatus.maxColonies;
 
+    const lead = await apiFetch('/api/leadership', opts).catch(() => null);
+    const commander = lead?.unlocked && lead.vessel
+      ? {
+        callsign: lead.vessel.callsign,
+        talentPoints: lead.vessel.unspentTalentPoints || 0,
+        missingHull: lead.repair?.missingHull || Math.max(0, (lead.vessel.maxHullIntegrity || 0) - (lead.vessel.hullIntegrity || 0)),
+        maxHull: lead.vessel.maxHullIntegrity || 0,
+      }
+      : null;
+
     return {
-      planets, moons, research, missions, slots,
+      planets, moons, research, missions, slots, commander,
       maxFleetSlots: missionsData.maxFleetSlots ?? null,
       researchSlots: planets.filter(p => p.hasLab).length,
       fetchedAt: now,
