@@ -19,6 +19,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   asteroid and fleet views), including a distinct colour per rare resource.
 - Resource amounts are shown as whole numbers throughout the add-on.
 - Status messages are classified consistently as warnings or errors.
+
 ## [2.0.0] - 2026-10-15
 
 ### Important
