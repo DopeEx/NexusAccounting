@@ -8,7 +8,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - A **Dashboard** tab, now the default tab: total resources with hourly production
-  across all planets and moons, active missions and fleet slots, running research,
+  across all planets and moons, active missions and fleet slots, a "Needs attention"
+  box (idle research labs, planets without construction, nearly full storage, command
+  ship repair, damaged ships, unspent
+  talent points),
   an empire summary and one card per planet or moon with its construction queue,
   shipyard queue and hangar fleet by class. It refreshes every minute while visible.
 - The *What's new* dialog is remembered once read and only reappears for a new version.
