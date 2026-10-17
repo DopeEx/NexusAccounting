@@ -676,6 +676,9 @@ async function renderBuilder() {
   let getShips = () => [];
   let getCargoNeed = () => 0;   // total resource units being sent (resource mode only)
   let fuelSrc, fuelSys;
+  let calcLocalCap = () => 0;   // locally estimated capacity of the currently selected ships (resource mode)
+  const fitState = { short: false, over: false };
+  let updateFitBtn = () => {};
 
   if (b.mode === 'collect') {
     const planets = allColonies.filter(c => c.kind === 'Planet');
@@ -792,7 +795,7 @@ async function renderBuilder() {
         const ns = srcOpts.find(c => c.id === Number(sel.value)); if (!ns) return;
         b.src = ns;
         for (const [rk, ent] of Object.entries(b.res)) { ent.max = Math.floor((ns.res && ns.res[rk]) || 0); ent.amount = Math.min(ent.amount, ent.max); }
-        b.cargoManual = null;
+        b.cargoManual = null; b.capRatio = null;
         renderBuilder();
       });
       box.appendChild(fieldRow('<span style="color:#9aa4b2;">From planet</span>', sel));
@@ -803,8 +806,20 @@ async function renderBuilder() {
       inp.addEventListener('input', () => { ent.amount = Math.min(ent.max, Math.max(0, parseInt(inp.value, 10) || 0)); refreshCargo(); });
       // Re-plan the fleet to match the new amount (on blur/enter, so focus isn't lost mid-typing).
       inp.addEventListener('change', () => { b.cargoManual = planFleetMulti(amountsOf(), cargoShips).plan; renderBuilder(); });
+      const ctl = document.createElement('div'); ctl.style.cssText = 'display:flex; align-items:center; gap:4px;';
+      const fill = document.createElement('button'); fill.type = 'button'; fill.textContent = 'Fill';
+      fill.title = 'Set to the most the fleet can still carry, given the other goods';
+      fill.style.cssText = 'background:#21262d; border:1px solid #30363d; color:#e6edf3; border-radius:6px; padding:4px 8px; cursor:pointer; line-height:1;';
+      fill.onclick = () => {
+        const test = a => fits(Object.fromEntries(Object.entries(b.res).map(([kk, e]) => [RES_BY_K[kk].cargo, kk === k ? a : e.amount])));
+        let lo = 0, hi = ent.max;
+        if (test(hi)) lo = hi;
+        else while (hi - lo > 1) { const mid = Math.floor((lo + hi) / 2); if (test(mid)) lo = mid; else hi = mid; }
+        ent.amount = lo; b.cargoManual = null; renderBuilder();
+      };
+      ctl.append(withStepper(inp, ent.max), fill);
       box.appendChild(fieldRow(`<img src="${IMG}/${r.icon}" width="15" height="15" style="width:15px;height:15px;"> ${r.label} <span style="color:#6e7681;">/ ${fmt(ent.max)}</span>`,
-        withStepper(inp, ent.max), () => { delete b.res[k]; b.cargoManual = null; if (!Object.keys(b.res).length) builder = null; renderBuilder(); }));
+        ctl, () => { delete b.res[k]; b.cargoManual = null; if (!Object.keys(b.res).length) builder = null; renderBuilder(); }));
     }
     const allHaulers = await cargoShipsOf(b.src, Object.keys(b.res).map(k => RES_BY_K[k].cargo));
     const cargoShips = allHaulers.filter(s => cargoSel.has(s.key));
@@ -816,10 +831,32 @@ async function renderBuilder() {
     const amountsOf = () => Object.fromEntries(Object.entries(b.res).map(([k, e]) => [RES_BY_K[k].cargo, e.amount]));
     const totalCargo = () => Object.values(b.res).reduce((s, e) => s + e.amount, 0);
     getCargoNeed = () => totalCargo();
+    calcLocalCap = () => cargoShips.reduce((s, cs) => s + (b.cargoManual[cs.shipDefId] || 0) * cs.cap, 0);
+    // Can the whole available fleet carry these amounts? Respects per-ship cargo
+    // restrictions and, once known, the game's real capacity vs. our estimate.
+    const fits = amts => {
+      const raw = cargoShips.reduce((s, cs) => s + cs.avail * cs.cap, 0);
+      const limit = b.capRatio && b.capRatio < 1 ? Math.floor(raw * b.capRatio) : Infinity;
+      const full = Object.fromEntries(cargoShips.map(cs => [cs.shipDefId, cs.avail]));
+      return Object.values(amts).reduce((s, v) => s + v, 0) <= limit && residualAfter(full, amts, cargoShips) <= 0;
+    };
+    const fitBtn = document.createElement('button'); fitBtn.type = 'button'; fitBtn.textContent = 'Fit to fleet';
+    fitBtn.title = 'Scale all goods down proportionally so they fit the fleet';
+    fitBtn.style.cssText = 'display:none; margin-top:6px; padding:4px 12px; border-radius:6px; border:1px solid #1f6feb; background:#1f6feb; color:#fff; cursor:pointer; font-size:0.85rem;';
+    fitBtn.onclick = () => {
+      const scaled = f => Object.fromEntries(Object.entries(b.res).map(([k, e]) => [RES_BY_K[k].cargo, Math.min(e.max, Math.floor(e.amount * f))]));
+      let lo = 0, hi = 1;
+      if (fits(scaled(1))) lo = 1;
+      else for (let i = 0; i < 30; i++) { const mid = (lo + hi) / 2; if (fits(scaled(mid))) lo = mid; else hi = mid; }
+      for (const [k, e] of Object.entries(b.res)) e.amount = Math.min(e.max, Math.floor(e.amount * lo));
+      b.cargoManual = null; renderBuilder();
+    };
+    updateFitBtn = () => { fitBtn.style.display = fitState.short || fitState.over ? '' : 'none'; };
     if (b.cargoManual == null) b.cargoManual = planFleetMulti(amountsOf(), cargoShips).plan;
     const refreshCargo = () => {
       const need = totalCargo();
       const short = residualAfter(b.cargoManual, amountsOf(), cargoShips);
+      fitState.short = short > 0; updateFitBtn();
       capLine.innerHTML = `Carrying <b style="color:${short <= 0 ? '#56d364' : '#ff7b72'}">${fmt(need - short)}</b> / ${fmt(need)}` +
         (short > 0 ? ` <span style="color:#ff7b72;">· short ${fmt(short)}</span>` : '');
       send.disabled = need <= 0 || short > 0;
@@ -836,7 +873,7 @@ async function renderBuilder() {
       warn.textContent = allHaulers.length ? 'No transport type selected.' : 'No cargo ships on this colony.';
       cw.appendChild(warn);
     }
-    cw.appendChild(capLine);
+    cw.append(capLine, fitBtn);
     getShips = () => cargoShips.map(cs => ({ shipDefId: cs.shipDefId, quantity: b.cargoManual[cs.shipDefId] || 0 })).filter(s => s.quantity > 0);
     fuelSrc = b.src.id; fuelSys = b.target.systemId;
     box.append(fuelLine);
@@ -872,6 +909,9 @@ async function renderBuilder() {
     if (est && b.mode === 'resource') {
       const need = getCargoNeed();
       const statusText = String(status?.dataset?.status ?? '');
+      const localCap = calcLocalCap();
+      if (localCap > 0 && est.totalCargoCapacity > 0) b.capRatio = est.totalCargoCapacity / localCap;
+      fitState.over = need > est.totalCargoCapacity; updateFitBtn();
       if (need > est.totalCargoCapacity) {
         send.disabled = true;
         setStatusText(status, `Cargo hold exceeds fleet capacity: ${fmt(need)} > ${fmt(est.totalCargoCapacity)}`, 'error');
