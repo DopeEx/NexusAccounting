@@ -4,13 +4,28 @@
 export let store = {};   // full storage snapshot
 export function setStore(s) { store = s; }   // setter: other modules can't reassign an import
 
-export let activeTab = 'global';
+export let activeTab = 'dashboard';
 export function setActiveTab(t) { activeTab = t; }
+
+// Message class by wording, so every status line is colored consistently:
+// failures are errors (red), unmet preconditions are warnings (yellow).
+const ERROR_TEXT = /\bfailed\b|^(⚠\s*)?(error|failed)\b|^could not\b|^unable to\b/i;
+const WARNING_TEXT = /^cannot\b|^waiting for ships\b|^select .+ first\b|^no (suitable|source|available)\b/i;
+
+function classifyStatus(text, variant) {
+  const s = String(text ?? '');
+  if (variant === 'warning' || !variant) {
+    if (ERROR_TEXT.test(s)) return 'error';
+  }
+  if (!variant && WARNING_TEXT.test(s)) return 'warning';
+  return variant;
+}
 
 export function setStatusText(el, text, variant) {
   if (!el) return;
   el.style.color = '';
   el.textContent = '';
+  variant = classifyStatus(text, variant);
   if (!variant) {
     el.textContent = text;
     return;
@@ -24,6 +39,7 @@ export function setStatusText(el, text, variant) {
 export function appendStatusText(el, text, variant) {
   if (!el) return null;
   el.style.color = '';
+  variant = classifyStatus(text, variant);
   const span = document.createElement('span');
   span.className = ['status-message', variant].filter(Boolean).join(' ');
   span.textContent = text;
@@ -594,28 +610,31 @@ function inlineMd(parent, text) {
 // One-button info modal (e.g. "What's new"). `body` may be a string (plain
 // text) or a DOM node (e.g. from renderMarkdown).
 export function infoDialog(title, body) {
-  const ov = document.createElement('div');
-  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:center;justify-content:center';
-  const box = document.createElement('div');
-  box.style.cssText = 'background:#1b2030;color:#e6e8ee;border:1px solid #39405a;border-radius:8px;max-width:480px;max-height:70vh;overflow:auto;padding:20px;font:14px/1.5 system-ui,sans-serif';
-  const h = document.createElement('h3');
-  h.textContent = title;
-  h.style.cssText = 'margin:0 0 12px';
-  const msg = document.createElement('div');
-  if (body instanceof Node) msg.append(body);
-  else { msg.textContent = body; msg.style.cssText = 'white-space:pre-wrap'; }
-  const btns = document.createElement('div');
-  btns.style.cssText = 'margin-top:18px;display:flex;justify-content:flex-end';
-  const ok = document.createElement('button');
-  ok.textContent = 'Got it';
-  ok.style.cssText = 'padding:7px 16px;border-radius:6px;border:1px solid #3b82f6;background:#3b82f6;color:#fff;cursor:pointer';
-  ok.onclick = () => ov.remove();
-  ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
-  btns.append(ok);
-  box.append(h, msg, btns);
-  ov.append(box);
-  document.body.append(ov);
-  ok.focus();
+  return new Promise(resolve => {
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:center;justify-content:center';
+    const box = document.createElement('div');
+    box.style.cssText = 'background:#1b2030;color:#e6e8ee;border:1px solid #39405a;border-radius:8px;max-width:480px;max-height:70vh;overflow:auto;padding:20px;font:14px/1.5 system-ui,sans-serif';
+    const h = document.createElement('h3');
+    h.textContent = title;
+    h.style.cssText = 'margin:0 0 12px';
+    const msg = document.createElement('div');
+    if (body instanceof Node) msg.append(body);
+    else { msg.textContent = body; msg.style.cssText = 'white-space:pre-wrap'; }
+    const btns = document.createElement('div');
+    btns.style.cssText = 'margin-top:18px;display:flex;justify-content:flex-end';
+    const ok = document.createElement('button');
+    ok.textContent = 'Got it';
+    ok.style.cssText = 'padding:7px 16px;border-radius:6px;border:1px solid #3b82f6;background:#3b82f6;color:#fff;cursor:pointer';
+    const close = () => { ov.remove(); resolve(); };
+    ok.onclick = close;
+    ov.onclick = (e) => { if (e.target === ov) close(); };
+    btns.append(ok);
+    box.append(h, msg, btns);
+    ov.append(box);
+    document.body.append(ov);
+    ok.focus();
+  });
 }
 
 // Fuel estimate, cached per route+fleet+mission so the server's mission-specific
@@ -688,8 +707,9 @@ export function rememberSelection(id, value) {
   return run;
 }
 
+// Whole numbers only: amounts are never fractional for the player, but the API returns fractions.
 export function fmt(n) {
-  return n == null ? '0' : Number(n).toLocaleString();
+  return n == null ? '0' : Math.round(Number(n) || 0).toLocaleString();
 }
 
 // ── In-flight mission progress bars ─────────────────────────────────────────
@@ -933,15 +953,15 @@ export function computeSeries(reports, mode, fieldGetters) {
 }
 
 export const RESOURCE_SERIES = [
-  { field: 'ore',          label: 'Ore',          color: '#f0883e' },
-  { field: 'silicates',    label: 'Silicates',    color: '#56d364' },
-  { field: 'hydrogen',     label: 'Hydrogen',     color: '#79c0ff' },
-  { field: 'alloys',       label: 'Alloys',       color: '#e3b341' },
-  { field: 'cryo_ice',     label: 'Cryo-Ice',     color: '#a5d6ff' },
-  { field: 'quantum_dust', label: 'Quantum Dust', color: '#bc8cff' },
-  { field: 'plasma_core',  label: 'Plasma Core',  color: '#ff7b72' },
-  { field: 'dark_matter',  label: 'Dark Matter',  color: '#d2a8ff' },
-  { field: 'antimatter',   label: 'Antimatter',   color: '#ffa657' },
+  { field: 'ore',          label: 'Ore',          color: '#fb923c' },
+  { field: 'silicates',    label: 'Silicates',    color: '#c084fc' },
+  { field: 'hydrogen',     label: 'Hydrogen',     color: '#60a5fa' },
+  { field: 'alloys',       label: 'Alloys',       color: '#94a3b8' },
+  { field: 'cryo_ice',     label: 'Cryo-Ice',     color: '#67e8f9' },
+  { field: 'quantum_dust', label: 'Quantum Dust', color: '#f472b6' },
+  { field: 'plasma_core',  label: 'Plasma Core',  color: '#f97316' },
+  { field: 'dark_matter',  label: 'Dark Matter',  color: '#9333ea' },
+  { field: 'antimatter',   label: 'Antimatter',   color: '#ef4444' },
   { field: 'precursor_fragments', label: 'Precursor Fragments', color: '#7ee787' },
   { field: 'artifact',            label: 'Artifact',            color: '#d29922' },
 ];
@@ -1108,7 +1128,7 @@ export const SCALE_OPTS = {
 export function zeroCell(v) {
   const td = document.createElement('td');
   if (v) {
-    td.textContent = Number(v).toLocaleString();
+    td.textContent = fmt(v);
   } else {
     const span = document.createElement('span');
     span.className = 'zero';
@@ -1122,11 +1142,11 @@ export function zeroCell(v) {
 // stored flat on totals or inside a `rare` map; read either.
 export const EXTRA_RESOURCES = [
   ['alloys', 'Alloys', 'alloys'],
-  ['cryo_ice', 'Cryo-Ice', 'hydrogen'],
-  ['quantum_dust', 'Quantum Dust', 'rare'],
-  ['plasma_core', 'Plasma Core', 'rare'],
-  ['dark_matter', 'Dark Matter', 'rare'],
-  ['antimatter', 'Antimatter', 'rare'],
+  ['cryo_ice', 'Cryo-Ice', 'cryo_ice'],
+  ['quantum_dust', 'Quantum Dust', 'quantum_dust'],
+  ['plasma_core', 'Plasma Core', 'plasma_core'],
+  ['dark_matter', 'Dark Matter', 'dark_matter'],
+  ['antimatter', 'Antimatter', 'antimatter'],
   ['precursor_fragments', 'Precursor Fragments', 'rare'],
   ['artifact', 'Artifact', 'rare'],
 ];
@@ -1151,7 +1171,7 @@ export function appendRareCards(container, rare, suffix) {
   Object.entries(rare || {})
     .sort((a, b) => b[1] - a[1])
     .forEach(([k, v]) => container.appendChild(
-      makeStatCard(`${k.replace(/_/g, ' ')}${suffix}`, fmt(v), 'rare')
+      makeStatCard(`${k.replace(/_/g, ' ')}${suffix}`, fmt(v), k)
     ));
 }
 
@@ -1257,9 +1277,13 @@ export function renderNetCards(containerId, collected, lost, periodLabel, fuelHy
 // any rares) for the current view period. `totals` is a mode-aware totals
 // object; returns the Chart instance.
 export const RESOURCE_COLORS = {
-  ore: '#f0883e', silicates: '#56d364', hydrogen: '#79c0ff', alloys: '#e3b341',
+  ore: '#fb923c', silicates: '#c084fc', hydrogen: '#60a5fa', alloys: '#94a3b8',
 };
-export const RARE_PALETTE = ['#bc8cff', '#d2a8ff', '#ff7b72', '#ffa657', '#a5d6ff', '#7ee787'];
+export const RARE_COLORS = {
+  cryo_ice: '#67e8f9', quantum_dust: '#f472b6', plasma_core: '#f97316',
+  bio_extract: '#10b981', dark_matter: '#9333ea', antimatter: '#ef4444',
+};
+const RARE_FALLBACK = ['#bc8cff', '#d2a8ff', '#ffa657', '#7ee787'];
 
 export function makeResourceDoughnut(canvasId, totals) {
   const entries = [];
@@ -1268,7 +1292,7 @@ export function makeResourceDoughnut(canvasId, totals) {
   }
   let ri = 0;
   for (const [k, v] of Object.entries(totals.rare || {})) {
-    if (v > 0) entries.push([k.replace(/_/g, ' '), v, RARE_PALETTE[ri++ % RARE_PALETTE.length]]);
+    if (v > 0) entries.push([k.replace(/_/g, ' '), v, RARE_COLORS[k] || RARE_FALLBACK[ri++ % RARE_FALLBACK.length]]);
   }
   const total = entries.reduce((s, e) => s + e[1], 0);
   return new Chart(document.getElementById(canvasId), {
@@ -1276,7 +1300,7 @@ export function makeResourceDoughnut(canvasId, totals) {
     data: {
       labels: entries.map(e => {
         const pct = total ? (e[1] / total * 100).toFixed(1) : 0;
-        return `${e[0]} — ${Number(e[1]).toLocaleString()} (${pct}%)`;
+        return `${e[0]} — ${fmt(e[1])} (${pct}%)`;
       }),
       datasets: [{ data: entries.map(e => e[1]), backgroundColor: entries.map(e => e[2]) }],
     },
@@ -1288,7 +1312,7 @@ export function makeResourceDoughnut(canvasId, totals) {
           callbacks: {
             label: ctx => {
               const pct = total ? (ctx.parsed / total * 100).toFixed(1) : 0;
-              return ` ${Number(ctx.parsed).toLocaleString()} (${pct}%)`;
+              return ` ${fmt(ctx.parsed)} (${pct}%)`;
             },
           },
         },

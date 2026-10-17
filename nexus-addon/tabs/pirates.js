@@ -2,6 +2,7 @@
 
 import { loadFleetTemplates } from './fleets.js';
 import { suggestAttackFleet } from '../pirate-planner.js';
+import { pauseAutomationsForHumanVerification } from '../human-verification.js';
 import { EXTRA_RES_KEYS_UI, PER_PAGE, SERIES_GETTERS, appendExtraResourceCards, applySort, attachSortable, computeResourcesLost, computeSeries, editFleetDialog, emptyResources, filterZone, fmt, fmtCountdown, fuelForMode, getLabelKey, getMode, isUnfiltered, makeResourceLineChart, makeStatCard, missionProgress, periodLabelFor, recordsForMode, renderLostCards, renderNetCards, rememberSelection, rememberedSelections, setStatusText, store, windowActive, zoneCell, ZONE_COLORS } from '../common.js';
 
 export let chartPirateLoot, chartPirateOutcomes;
@@ -252,6 +253,7 @@ async function automatePirateAttacks() {
       if (res.error) {
         if (String(res.error).includes('Human verification')) {
           stopAttackAutomation(`Attack failed: ${res.error}`, true);
+          pauseAutomationsForHumanVerification(res.error);
         } else {
           setStatusText(autoStatus, `Attack failed: ${res.error}`, 'warning');
         }
@@ -299,7 +301,7 @@ async function automatePirateScouting() {
     if (!target) { setStatusText(autoStatus, 'No camps need scouting.'); return; }
 
     const pick = await pickSourcePlanet(target, available => scoutTemplateShips(available));
-    if (pick.error) { setStatusText(autoStatus, pick.error); return; }
+    if (pick.error) { setStatusText(autoStatus, pick.error, 'warning'); return; }
     const planetId = pick.planet.id;
     const planet = pick.planet;
 
@@ -308,11 +310,8 @@ async function automatePirateScouting() {
     });
     if (res.error) {
       if (String(res.error).includes('Human verification')) {
-        const el = document.getElementById('pc-auto');
-        el.checked = false;
-        el.disabled = true;
-        rememberSelection('pc-auto', false);
         setStatusText(autoStatus, `Scout failed: ${res.error}`, 'error');
+        pauseAutomationsForHumanVerification(res.error);
       } else {
         setStatusText(autoStatus, `Scout failed: ${res.error}`, 'warning');
       }
@@ -506,7 +505,7 @@ async function sendCampFleet(camp, { title, messageType, doneText, useTemplate }
   const pick = await pickSourcePlanet(camp, available => (useTemplate
     ? scoutTemplateShips(available)
     : (isAttack ? attackShipsPresent(available) : {})));
-  if (pick.error) { setStatusText(status, pick.error); return; }
+  if (pick.error) { setStatusText(status, pick.error, 'warning'); return; }
   const { planet, av } = pick;
   const planetId = planet.id;
 
@@ -793,7 +792,7 @@ export function renderPirateTable() {
   function zeroTd(v) {
     const td = document.createElement('td');
     if (v) {
-      td.textContent = v.toLocaleString();
+      td.textContent = fmt(v);
     } else {
       const span = document.createElement('span');
       span.className = 'zero';

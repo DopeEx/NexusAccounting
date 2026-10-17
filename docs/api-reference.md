@@ -29,11 +29,11 @@ Some API reads are also made directly by the add-on UI in the game tab.
 | Feature | Method and route | Use |
 |---|---|---|
 | Player | `GET /api/auth/me` | Current player identity and account details |
-| Planets | `GET /api/planets` | Planet list and IDs |
-| Planets | `GET /api/planets/{planetId}` | Planet resources and building data |
+| Planets | `GET /api/planets` | Own planets only (no moons) in the in-game order: `planets[]` with `id`, `name`, `planetType`, `isHomeworld`, `colonizedAt`, `sortOrder` (0-based, configurable in the game), `systemId`, `position`, `systemName` |
+| Planets | `GET /api/planets/{planetId}` | `planet` (also `sortOrder`, `populationGrowthRate`, `maxPopulation`, `<resource>Storage`, `rareResourceStorage`; stock `ore`, `silicates`, `hydrogen`, `alloys`, `cryoIce`, `quantumDust`, `plasmaCore`, `bioExtract`, `darkMatter`, `antimatter`; hourly rates as `<resource>Rate`; `usedBuildingSlots`/`maxBuildingSlots`, population, storage), `systemInfo.systemName`, `buildings[]` (`isUpgrading`, `upgradeEndsAt`, `definition`, and for queued upgrades `queueId`, `queueStatus` such as `pending`, `queueTargetLevel`; pending entries have no end time), and `buildQueueCount`/`buildQueueMax` (construction queue per planet, max 3 including the running job; moons have none) |
 | Fleets | `GET /api/planets/{planetId}/fleet` | Ships stationed at a planet |
-| Shipyard | `GET /api/planets/{planetId}/shipyard` | Ship definitions and planet availability |
-| Research | `GET /api/research?planetId={planetId}` | Research catalogue and player progress |
+| Shipyard | `GET /api/planets/{planetId}/shipyard` | Ship definitions and planet availability, plus the build queues (`planetaryQueueAll`, `orbitalQueueAll`: `shipName`, `quantity`, `completed`, `isRepair`, `status`, `endsAt`; waiting jobs have `status: "pending"` and `endsAt: null`). Each yard (planetary, orbital, moon) has its own queue of up to `maxQueueSize` (3) jobs |
+| Research | `GET /api/research?planetId={planetId}` | Research catalogue (`research[]` with current `level`) and `activeResearches[]` across all planets (`name`, `planetId`, `planetName`, `endsAt`; no level, the target level is `level + 1`) |
 | Missions | `GET /api/fleet/missions` | Active and returning fleets |
 | Reports | `GET /api/fleet/survey-reports` | Survey results used by accounting and follow-up tools |
 | Reports | `GET /api/fleet/survey-cooldowns` | Survey availability |
@@ -50,10 +50,10 @@ Some API reads are also made directly by the add-on UI in the game tab.
 | Galaxy | `GET /api/galaxy/arms/{armId}/sectors` | Sectors in an arm |
 | Galaxy | `GET /api/galaxy/sectors/{sectorId}/systems` | Systems in a sector |
 | Galaxy | `GET /api/galaxy/map` | Known systems and coordinates |
-| Galaxy | `GET /api/galaxy/systems/{systemId}/planets` | Planets, asteroid fields, and moons in a system |
+| Galaxy | `GET /api/galaxy/systems/{systemId}/planets` | `planets[]` (with `userId`, `ownerName`, `isHomeworld`, `planetType`, `size`, `temperature`; no `sortOrder`), `asteroidFields[]`, and `moons[]` (`planetId`, `moonType`, `size`, `buildingSlots`, `userId`, `ownerName`; a moon with your `userId` is a colonized own moon), plus `visibility` and `included` |
 | Trade | `GET /api/market/hubs`, `GET /api/market/orders` | Market hubs and public orders |
 | Trade | `GET /api/market/my-trades`, `GET /api/alliance-trade/orders` | Player trades and alliance orders |
-| Logistics | `GET /api/outposts`, `GET /api/moons/{moonId}` and related fleet routes | Logistics destinations and their state |
+| Logistics | `GET /api/outposts`, `GET /api/moons/{moonId}`, `GET /api/moons/{moonId}/shipyard` (`fleet[]` with `quantity` and `definition.shipClass`, build queue in `queueAll[]` like the planet shipyard) and related fleet routes | Logistics destinations and their state. `/api/moons/{id}` returns `moon` (same resource and `<resource>Rate` fields as planets, plus `moonType`, `buildingSlots`, `planetId`), `buildings[]` (flat: `key`, `name`, `level`, `isUpgrading`, `upgradeEndsAt`) and `queue[]`; the Dashboard also reads own moons' resources and fleets |
 
 Paged report and trade feeds may accept `page` and `limit` query parameters.
 The exact parameters and response envelope depend on the endpoint.

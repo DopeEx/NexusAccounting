@@ -413,7 +413,7 @@ async function launchRuinsSurvey() {
   if (!found) { setStatusText(status, 'No unclaimed Ancient moon found nearby.'); return; }
 
   const r = await templateShips(document.getElementById('xn-template').value, planetId);
-  if (r.error) { setStatusText(status, r.error); return; }
+  if (r.error) { setStatusText(status, r.error, 'warning'); return; }
   const sysName = found.system.name || `#${found.system.id}`;
   if (!await confirmDialog(`Launch ruins survey?\n\nTarget: ${found.moon.name} (${sysName}, ${found.distance} away)\n` +
     `From: ${planet.name}\nTemplate: ${r.name}` +

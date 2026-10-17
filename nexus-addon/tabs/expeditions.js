@@ -2,6 +2,7 @@
 // both kinds share one background store (exp_*), tagged per-record by `kind`.
 
 import { loadFleetTemplates } from './fleets.js';
+import { pauseAutomationsForHumanVerification } from '../human-verification.js';
 import { RESOURCE_SERIES, appendExtraResourceCards, applySort, attachSortable, clearAvailStrip, computeRawLossCost, computeSeries, editFleetDialog, fillResourceCards, filterZone, fmt, fmtCountdown, fuelForMode, getLabelKey, getMode, inWindowRange, missionProgress, makeResourceDoughnut, makeResourceLineChart, makeStatCard, periodLabelFor, renderAvailStrip, renderPagedTable, rememberSelection, rememberedSelections, store, windowActive, zeroCell, zoneCell, setStatusText } from '../common.js';
 
 export let chartExpeditions, chartExpComp;
@@ -256,10 +257,8 @@ export async function runExpeditionAutomations() {
     });
     if (res.error) {
       if (String(res.error).includes('Human verification')) {
-        box.checked = false;
-        box.disabled = true;
-        rememberSelection('e-auto', false);
         setStatusText(status, `Launch failed: ${res.error}`, 'error');
+        pauseAutomationsForHumanVerification(res.error);
       } else {
         setStatusText(status, `Launch failed: ${res.error}`, 'warning');
       }
@@ -367,7 +366,7 @@ async function launchExpedition() {
   const depth = Math.min(depthMax, Math.max(depthMin, parseInt(document.getElementById('e-launch-depth').value, 10) || depthMin));
 
   const r = await resolveExpeditionShips(planetId);
-  if (r.error) { setStatusText(status, r.error); return; }
+  if (r.error) { setStatusText(status, r.error, 'warning'); return; }
 
   const ships = await editFleetDialog({
     title: 'Launch expedition',

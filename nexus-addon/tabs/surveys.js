@@ -221,7 +221,7 @@ export function renderTable() {
   function zeroTd(v) {
     const td = document.createElement('td');
     if (v) {
-      td.textContent = v.toLocaleString();
+      td.textContent = fmt(v);
     } else {
       const span = document.createElement('span');
       span.className = 'zero';

@@ -7,7 +7,8 @@
 // All routed through the game tab (same-origin) like the asteroid mine call.
 
 import { loadFleetTemplates } from './fleets.js';
-import { applySort, attachSortable, confirmDialog, fmtCountdown, fuelEstimate, missionProgress, rememberSelection, rememberedSelections, setStatusMessage, setStatusText, ZONE_COLORS, ZONE_DEFS } from '../common.js';
+import { pauseAutomationsForHumanVerification } from '../human-verification.js';
+import { applySort, attachSortable, confirmDialog, fmt, fmtCountdown, fuelEstimate, missionProgress, rememberSelection, rememberedSelections, setStatusMessage, setStatusText, ZONE_COLORS, ZONE_DEFS } from '../common.js';
 
 let inited = false;
 let scPlanets = [];          // [{ id, name, systemId, systemName }]
@@ -33,16 +34,9 @@ let scAutoInvestigateRunning = false;
 let scAutoSalvageRunning = false;
 let scAutoDebrisRunning = false;
 
-// automations are disabled when human verification is required.
+// All automations are paused when human verification is required.
 function disableAutomaticsOnHumanCheck() {
-  const ids = ['sc-auto', 'sc-investigate-auto', 'sc-debris-auto', 'sc-salvage-auto'];
-  for (const id of ids) {
-    const el = document.getElementById(id);
-    if (!el) continue;
-    el.checked = false;
-    el.disabled = true;
-    rememberSelection(id, false);
-  }
+  return pauseAutomationsForHumanVerification('Human verification required');
 }
 
 export function resetScoutingTab() {
@@ -786,7 +780,7 @@ async function launchScan() {
   }
 
   const r = await templateShips(document.getElementById('sc-scan-template').value, planetId);
-  if (r.error) { setStatusText(status, r.error); return; }
+  if (r.error) { setStatusText(status, r.error, 'warning'); return; }
 
   setStatusText(status, `Surveying ${target.name}…`);
   const res = await browser.runtime.sendMessage({
@@ -796,8 +790,9 @@ async function launchScan() {
     const msg = `Survey failed: ${res.error}`;
     // If humation is required, show the status message in red
     if (String(res.error).includes('Human verification')) {
+      setStatusText(status, msg, 'error');
       disableAutomaticsOnHumanCheck();
-      setStatusText(status, msg, 'error'); return;
+      return;
     }
     setStatusText(status, msg, 'warning'); return;
   }
@@ -1126,7 +1121,7 @@ async function investigate(report) {
   const planetId = Number(document.getElementById('sc-planet').value);
 
   const r = await templateShips(document.getElementById('sc-inv-template').value, planetId);
-  if (r.error) { setStatusText(status, r.error); return; }
+  if (r.error) { setStatusText(status, r.error, 'warning'); return; }
 
   setStatusText(status, `Investigating ${report.systemName}…`);
   const res = await browser.runtime.sendMessage({
@@ -1136,8 +1131,9 @@ async function investigate(report) {
     const msg = `Investigate failed: ${res.error}`;
     // If humation is required, show the status message in red
     if (String(res.error).includes('Human verification')) {
+      setStatusText(status, msg, 'error');
       disableAutomaticsOnHumanCheck();
-      setStatusText(status, msg, 'error'); return;
+      return;
     }
     setStatusText(status, msg, 'warning'); return;
   }
@@ -1553,7 +1549,7 @@ function renderDebris() {
       ['Ore', f.ore],
       ['Sil', f.silicates],
       ['Alloy', f.alloys],
-    ].filter(([, value]) => value).map(([label, value]) => `${label} ${value.toLocaleString()}`).join(', ');
+    ].filter(([, value]) => value).map(([label, value]) => `${label} ${fmt(value)}`).join(', ');
     const shipItem = makeMetaItem('Number of Ships', plannedShips.length ? plannedShipCount.join(', ') : '—', 'sc-debris-shipn');
     const fuelItem = makeMetaItem('Fuel Cost', estimate?.fuel ?? '…', 'sc-debris-fuel');
     const timeItem = makeMetaItem('Travel Time', estimate?.time ?? '…', 'sc-debris-time');
@@ -1564,7 +1560,7 @@ function renderDebris() {
       systemItem,
       zoneItem,
       makeMetaItem('Resources left', resourcesLeft || '—', 'sc-debris-breakdown'),
-      makeMetaItem('Total', (f.total || 0).toLocaleString()),
+      makeMetaItem('Total', fmt(f.total || 0)),
       shipItem,
       fuelItem,
       timeItem,
@@ -1679,9 +1675,9 @@ async function collectDebris(field, automated = false, filters = {}) {
     if (!matches) return 'skip';
   }
 
-  if (!automated && !await confirmDialog(`Collect debris at ${field.system} (${field.total.toLocaleString()} cargo)?\n\n` +
+  if (!automated && !await confirmDialog(`Collect debris at ${field.system} (${fmt(field.total)} cargo)?\n\n` +
     `From: ${planet ? planet.name : planetId}` +
-    (short ? `\n\n⚠ Selected ships on this planet only carry ${carried.toLocaleString()} — collecting what fits.` : ''), ships)) return;
+    (short ? `\n\n⚠ Selected ships on this planet only carry ${fmt(carried)} — collecting what fits.` : ''), ships)) return;
 
   setStatusText(status, `Collecting at ${field.system}…`);
   const res = await browser.runtime.sendMessage({
@@ -1691,8 +1687,9 @@ async function collectDebris(field, automated = false, filters = {}) {
     const msg = `Collect failed: ${res.error}`;
     // If humation is required, show the status message in red
     if (String(res.error).includes('Human verification')) {
+      setStatusText(status, msg, 'error');
       disableAutomaticsOnHumanCheck();
-      setStatusText(status, msg, 'error'); return 'error';
+      return 'error';
     }
     setStatusText(status, msg, 'warning'); return 'error';
   }
@@ -1804,7 +1801,7 @@ function renderSalvage() {
     action.appendChild(btn);
 
     const breakdown = Object.entries(s.res)
-      .map(([k, v]) => `${RES_LABEL[k] || k} ${v.toLocaleString()}`).join(', ');
+      .map(([k, v]) => `${RES_LABEL[k] || k} ${fmt(v)}`).join(', ');
 
     const meta = document.createElement('div');
     meta.className = 'sc-salvage-meta-grid';
@@ -1828,7 +1825,7 @@ function renderSalvage() {
       systemItem,
       zoneItem,
       makeMetaItem('Resources left', breakdown || '—', 'sc-salvage-breakdown'),
-      makeMetaItem('Total', (s.total || 0).toLocaleString()),
+      makeMetaItem('Total', fmt(s.total || 0)),
       shipItem,
       fuelItem,
       timeItem,
@@ -1947,8 +1944,9 @@ async function collectSalvage(salvage, automated = false, filters = {}) {
     const msg = `Collect failed: ${res.error}`;
     // If humation is required, show the status message in red
     if (String(res.error).includes('Human verification')) {
+      setStatusText(status, msg, 'error');
       disableAutomaticsOnHumanCheck();
-      setStatusText(status, msg, 'error'); return automated ? 'error' : undefined;
+      return automated ? 'error' : undefined;
     }
     setStatusText(status, msg, 'warning'); return automated ? 'error' : undefined;
   }

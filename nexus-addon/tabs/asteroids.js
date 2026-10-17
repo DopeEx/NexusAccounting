@@ -8,17 +8,17 @@
 
 import { SCAN_CACHE_MAX, getSystemPlanets } from './finder.js';
 import { loadFleetTemplates } from './fleets.js';
-import { clearAvailStrip, editFleetDialog, fuelEstimate, rememberSelection, rememberedSelections, renderAvailStrip, setStatusText, ZONE_COLORS, ZONE_DEFS } from '../common.js';
+import { clearAvailStrip, editFleetDialog, fmt, fuelEstimate, rememberSelection, rememberedSelections, renderAvailStrip, setStatusText, ZONE_COLORS, ZONE_DEFS } from '../common.js';
 
 const ICON_BASE = 'https://s0.nexuslegacy.space/images/resources/';
 // asteroid fieldType → resource icon + label
 const FIELD_TYPES = [
-  { type: 'ore', res: 'ore', label: 'ore', color: '#f0883e' },
-  { type: 'gas', res: 'hydrogen', label: 'gas (hydrogen)', color: '#a371f7' },
-  { type: 'ice', res: 'cryo_ice', label: 'ice (cryo-ice)', color: '#a5d6ff' },
-  { type: 'plasma', res: 'plasma_core', label: 'plasma (core)', color: '#ff7b72' },
-  { type: 'quantum', res: 'quantum_dust', label: 'quantum (dust)', color: '#d2a8ff' },
-  { type: 'dark', res: 'dark_matter', label: 'dark (matter)', color: '#6e40c9' },
+  { type: 'ore', res: 'ore', label: 'ore', color: '#fb923c' },
+  { type: 'gas', res: 'hydrogen', label: 'gas (hydrogen)', color: '#60a5fa' },
+  { type: 'ice', res: 'cryo_ice', label: 'ice (cryo-ice)', color: '#67e8f9' },
+  { type: 'plasma', res: 'plasma_core', label: 'plasma (core)', color: '#f97316' },
+  { type: 'quantum', res: 'quantum_dust', label: 'quantum (dust)', color: '#f472b6' },
+  { type: 'dark', res: 'dark_matter', label: 'dark (matter)', color: '#9333ea' },
 ];
 const TYPE_COLOR = Object.fromEntries(FIELD_TYPES.map(t => [t.type, t.color]));
 // Ship recommendation per asteroid field type: specialized ship + per-cycle
@@ -785,7 +785,7 @@ export function renderAsteroids() {
     tr.appendChild(sendTd);
 
     const content = f.remaining == null ? '—'
-      : `${f.remaining.toLocaleString()} / ${(f.total ?? 0).toLocaleString()}`;
+      : `${fmt(f.remaining)} / ${fmt(f.total ?? 0)}`;
     const tag = f.ownerName ? allianceTagCache[f.ownerName] : null;
     const owner = f.ownerName ? (tag ? `${f.ownerName} [${tag}]` : f.ownerName) : '—';
     const cells = [

@@ -6,6 +6,7 @@ Browser extension (Firefox and Chrome) for [Nexus Legacy](https://nexuslegacy.sp
 
 ## Features
 
+- **Dashboard**: default tab with total resources and hourly production across planets and moons, active missions, research, and per-colony queues and fleets.
 - **Statistics**: survey, pirate, mining, battle, debris, expedition, xeno and wormhole reports with all-time, daily, hourly and yesterday views, charts and loss/rebuild costs.
 - **Galaxy Scout**: scan systems and arms to find targets.
 - **Asteroid Fields**: search by zone and resource type, start mining fleets, and use escort templates.

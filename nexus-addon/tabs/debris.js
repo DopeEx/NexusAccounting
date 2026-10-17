@@ -78,7 +78,7 @@ export function renderDebrisTab() {
 
 export function cargoText(r) {
   return ['ore', 'silicates', 'alloys', 'hydrogen']
-    .filter(k => r[k]).map(k => `${k}: ${Number(r[k]).toLocaleString()}`).join(', ') || '—';
+    .filter(k => r[k]).map(k => `${k}: ${fmt(r[k])}`).join(', ') || '—';
 }
 
 export function fleetText(fleet) {
