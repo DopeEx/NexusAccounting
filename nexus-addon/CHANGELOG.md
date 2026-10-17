@@ -4,6 +4,21 @@ All notable changes to the Nexus Overseer Firefox addon (formerly Nexus Accounti
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- A **Dashboard** tab, now the default tab: total resources with hourly production
+  across all planets and moons, active missions and fleet slots, running research,
+  an empire summary and one card per planet or moon with its construction queue,
+  shipyard queue and hangar fleet by class. It refreshes every minute while visible.
+- The *What's new* dialog is remembered once read and only reappears for a new version.
+- A GitHub link and the version number in the dashboard footer; clicking the version reopens *What's new*.
+
+### Changed
+- Resource colours are now the same everywhere (stat cards, charts, tables,
+  asteroid and fleet views), including a distinct colour per rare resource.
+- Resource amounts are shown as whole numbers throughout the add-on.
+- Status messages are classified consistently as warnings or errors.
 ## [2.0.0] - 2026-10-15
 
 ### Important

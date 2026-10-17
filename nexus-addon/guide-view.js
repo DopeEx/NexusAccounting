@@ -20,6 +20,7 @@ const SECTIONS = [
     ['Data', 'The addon scrapes the game APIs every 15 minutes (and on demand). Everything is stored locally in your browser; nothing is sent anywhere. Auto-backups are written to Downloads before each update.'],
   ]],
   ['Dashboard tabs', [
+    ['Dashboard', 'Default tab: total resources and hourly production across all planets and moons, active missions with fleet slots, running research, an empire summary, and a card per planet/moon with its construction queue, shipyard queue and hangar fleet by class. Refreshes every minute while visible; Refresh updates immediately.'],
     ['Global', 'Combined resource totals and a "share by source" breakdown across all activities.'],
     ['Surveys / Pirates / Mining / Expeditions', 'Per-activity totals, net gain (loot − ship-cost losses − fuel), loot-composition doughnut, daily/hourly charts and a sortable report table.'],
     ['Battles', 'Every combat in one place: camp raids, mining/survey ambushes, expedition/wormhole fights and player-vs-player attacks. Click a row to expand the fleets (incl. enemy planetary defenses) and per-ship losses. Export CSV downloads the current view with fleets and per-round detail.'],

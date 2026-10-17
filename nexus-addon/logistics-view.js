@@ -848,7 +848,7 @@ async function renderBuilder() {
       let lo = 0, hi = 1;
       if (fits(scaled(1))) lo = 1;
       else for (let i = 0; i < 30; i++) { const mid = (lo + hi) / 2; if (fits(scaled(mid))) lo = mid; else hi = mid; }
-      for (const [k, e] of Object.entries(b.res)) e.amount = Math.min(e.max, Math.floor(e.amount * lo));
+      for (const e of Object.values(b.res)) e.amount = Math.min(e.max, Math.floor(e.amount * lo));
       b.cargoManual = null; renderBuilder();
     };
     updateFitBtn = () => { fitBtn.style.display = fitState.short || fitState.over ? '' : 'none'; };

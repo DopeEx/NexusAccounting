@@ -167,7 +167,9 @@ browser.runtime.onInstalled.addListener(async details => {
   if (live_search && live_search.enabled) browser.alarms.create(LS_ALARM, { periodInMinutes: LS_INTERVAL_MIN });
   // Snapshot existing data before the new version touches it.
   if (details.reason === 'update') {
-    await browser.storage.local.set({ whatsnew_pending: browser.runtime.getManifest().version });
+    const { whatsnew_read_version } = await browser.storage.local.get('whatsnew_read_version');
+    const version = browser.runtime.getManifest().version;
+    if (version !== whatsnew_read_version) await browser.storage.local.set({ whatsnew_pending: version });
     try {
       await backupToDownloads(`pre-update-${details.previousVersion || 'unknown'}`);
     } catch (err) {
@@ -468,6 +470,7 @@ const handleRuntimeMessage = async (msg, context = null) => {
     });
   }
   if (msg.type === 'GET_PLANETS') return getPlanets();
+  if (msg.type === 'GET_DASHBOARD_OVERVIEW') return getDashboardOverview({ polite: msg.polite !== false });
   if (msg.type === 'SIM_BOOTSTRAP') return apiGet('/api/combat-simulator/bootstrap');
   if (msg.type === 'SIM_RUN') return simulateCombat(msg.attacker, msg.defender);
   if (msg.type === 'REBUILD_AGGREGATES') return enqueue(rebuildAggregates).then(() => ({ ok: true }));
@@ -906,6 +909,198 @@ async function getPlanets() {
       systemName: p.systemName || null,
     }));
     return { planets };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+// Bird's-eye data for the Dashboard tab: running missions + fleet slots,
+// account-wide active research, and per colony the construction queue, ship
+// queue, resource stock and stationed fleet split by class.
+// Own moon ids are only discoverable via the galaxy view of the systems my planets
+// sit in, so cache them (moon ownership rarely changes).
+const MOON_IDS_TTL = 30 * 60 * 1000;
+let moonIdsCache = { key: '', at: 0, ids: [] };
+async function getOwnMoonIds(planetList, opts) {
+  const sysIds = [...new Set(planetList.map(p => p.systemId).filter(x => x != null))].sort();
+  const key = sysIds.join(',');
+  if (moonIdsCache.key === key && Date.now() - moonIdsCache.at < MOON_IDS_TTL) return moonIdsCache.ids;
+  try {
+    const me = await apiFetch('/api/auth/me', opts);
+    const myId = me.user && (me.user.id ?? me.user.userId);
+    if (myId == null) return moonIdsCache.ids;
+    const ids = [];
+    for (const s of sysIds) {
+      const sd = await apiFetch(`/api/galaxy/systems/${s}/planets`, opts).catch(() => ({}));
+      for (const mo of (sd.moons || [])) if (mo.userId != null && mo.userId === myId) ids.push(mo.id);
+    }
+    moonIdsCache = { key, at: Date.now(), ids };
+    return ids;
+  } catch {
+    return moonIdsCache.ids;
+  }
+}
+
+// One shipyard for the dashboard: running job first, queued jobs after it.
+function makeShipYard(label, exists, queue, max, future) {
+  const items = (queue || [])
+    .filter(it => it.status === 'pending' || future(it.endsAt))
+    .map(it => ({
+      name: it.shipName || it.shipKey || 'Ship',
+      quantity: Math.max(1, (it.quantity || 1) - (it.completed || 0)),
+      repair: !!(it.isRepair || it.operation === 'repair'),
+      endsAt: it.status === 'pending' ? null : it.endsAt,
+    }));
+  return { label, exists, max: max ?? 3, items };
+}
+
+async function getDashboardOverview({ polite = true } = {}) {
+  const opts = { polite };
+  try {
+    const [planetsData, missionsData, researchData] = await Promise.all([
+      apiFetch('/api/planets', opts),
+      apiFetch(MISSIONS_PATH, opts).catch(() => ({ missions: [] })),
+      apiFetch(RESEARCH_PATH, opts).catch(() => ({})),
+    ]);
+    const now = Date.now();
+    const future = t => t && new Date(t).getTime() > now;
+
+    const planets = [];
+    for (const p of (planetsData.planets || [])) {
+      const [detail, fleetData, yard] = await Promise.all([
+        apiFetch(`/api/planets/${p.id}`, opts).catch(() => null),
+        apiFetch(`/api/planets/${p.id}/fleet`, opts).catch(() => null),
+        apiFetch(`/api/planets/${p.id}/shipyard`, opts).catch(() => null),
+      ]);
+      const pl = detail?.planet || p;
+      const construction = (detail?.buildings || [])
+        .filter(b => b.queueId != null || (b.isUpgrading && future(b.upgradeEndsAt)))
+        .map(b => ({
+          name: b.definition?.name || b.definition?.key || 'Building',
+          level: b.queueTargetLevel || (b.level || 0) + 1,
+          endsAt: b.isUpgrading ? b.upgradeEndsAt : null,
+          pending: b.queueStatus === 'pending',
+          order: b.queueId ?? 0,
+        }))
+        .sort((a, b) => (a.pending - b.pending) || (a.order - b.order));
+      const hasBuilding = key => (detail?.buildings || []).some(b => b.definition?.key === key && (b.level || 0) > 0);
+      const shipYards = [
+        ['Planetary shipyard', 'p_shipyard', yard?.planetaryQueueAll],
+        ['Orbital shipyard', 'orbital_dock', yard?.orbitalQueueAll],
+      ].map(([label, key, q]) => makeShipYard(label, hasBuilding(key) || (q || []).length > 0, q, yard?.maxQueueSize, future));
+      const classes = {};
+      let totalShips = 0;
+      for (const f of (fleetData?.fleet || [])) {
+        const q = f.quantity || 0;
+        const cls = (f.definition?.shipClass || 'other').toLowerCase();
+        classes[cls] = (classes[cls] || 0) + q;
+        totalShips += q;
+      }
+      planets.push({
+        id: p.id,
+        name: pl.name || p.name || `Planet ${p.id}`,
+        systemName: detail?.systemInfo?.systemName || p.systemName || null,
+        isHomeworld: !!(p.isHomeworld ?? pl.isHomeworld),
+        sortOrder: pl.sortOrder ?? p.sortOrder ?? null,
+        hasLab: (detail?.buildings || []).some(b => b.definition?.key === 'research_lab' && (b.level || 0) > 0),
+        planetType: pl.planetType || null,
+        population: pl.population ?? null,
+        maxPopulation: pl.maxPopulation ?? null,
+        populationRate: pl.populationGrowthRate ?? null,
+        buildSlots: { used: pl.usedBuildingSlots ?? null, max: pl.maxBuildingSlots ?? null },
+        resources: {
+          ore: pl.ore || 0, silicates: pl.silicates || 0, hydrogen: pl.hydrogen || 0, alloys: pl.alloys || 0,
+          oreStorage: pl.oreStorage || 0, silicatesStorage: pl.silicatesStorage || 0, hydrogenStorage: pl.hydrogenStorage || 0, alloysStorage: pl.alloysStorage || 0,
+          oreRate: pl.oreRate || 0, silicatesRate: pl.silicatesRate || 0,
+          hydrogenRate: pl.hydrogenRate || 0, alloysRate: pl.alloysRate || 0,
+          cryoIce: pl.cryoIce || 0, quantumDust: pl.quantumDust || 0, plasmaCore: pl.plasmaCore || 0,
+          bioExtract: pl.bioExtract || 0, darkMatter: pl.darkMatter || 0, antimatter: pl.antimatter || 0,
+          cryoIceRate: pl.cryoIceRate || 0, quantumDustRate: pl.quantumDustRate || 0, plasmaCoreRate: pl.plasmaCoreRate || 0,
+          bioExtractRate: pl.bioExtractRate || 0, darkMatterRate: pl.darkMatterRate || 0, antimatterRate: pl.antimatterRate || 0,
+          rareStorage: pl.rareResourceStorage || 0,
+        },
+        construction,
+        queueMax: detail?.buildQueueMax ?? null,
+        shipYards,
+        fleet: { total: totalShips, classes },
+      });
+    }
+    planets.sort((a, b) => ((a.sortOrder ?? Infinity) - (b.sortOrder ?? Infinity)) || (b.isHomeworld - a.isHomeworld) || (a.id - b.id));
+
+    const moons = [];
+    for (const mid of await getOwnMoonIds(planetsData.planets || [], opts)) {
+      const [det, fl] = await Promise.all([
+        apiFetch(`/api/moons/${mid}`, opts).catch(() => null),
+        apiFetch(`/api/moons/${mid}/shipyard`, opts).catch(() => null),
+      ]);
+      const mo = det?.moon;
+      if (!mo) continue;
+      const classes = {};
+      let totalShips = 0;
+      for (const f of (fl?.fleet || [])) {
+        const q = f.quantity || 0;
+        const cls = (f.definition?.shipClass || 'other').toLowerCase();
+        classes[cls] = (classes[cls] || 0) + q;
+        totalShips += q;
+      }
+      moons.push({
+        id: mid,
+        name: mo.name || `Moon #${mid}`,
+        systemName: (planets.find(x => x.id === mo.planetId) || {}).systemName || null,
+        isMoon: true,
+        planetType: mo.moonType || mo.type || null,
+        population: null,
+        maxPopulation: null,
+        buildSlots: { used: (det.buildings || []).length, max: mo.buildingSlots ?? null },
+        resources: {
+          ore: mo.ore || 0, silicates: mo.silicates || 0, hydrogen: mo.hydrogen || 0, alloys: mo.alloys || 0,
+          oreStorage: mo.storage || 0, silicatesStorage: mo.storage || 0, hydrogenStorage: mo.storage || 0, alloysStorage: mo.storage || 0,
+          oreRate: mo.oreRate || 0, silicatesRate: mo.silicatesRate || 0,
+          hydrogenRate: mo.hydrogenRate || 0, alloysRate: mo.alloysRate || 0,
+          cryoIce: mo.cryoIce || 0, quantumDust: mo.quantumDust || 0, plasmaCore: mo.plasmaCore || 0,
+          bioExtract: mo.bioExtract || 0, darkMatter: mo.darkMatter || 0, antimatter: mo.antimatter || 0,
+          cryoIceRate: mo.cryoIceRate || 0, quantumDustRate: mo.quantumDustRate || 0, plasmaCoreRate: mo.plasmaCoreRate || 0,
+          bioExtractRate: mo.bioExtractRate || 0, darkMatterRate: mo.darkMatterRate || 0, antimatterRate: mo.antimatterRate || 0,
+        },
+        construction: (det.buildings || [])
+          .filter(b => b.isUpgrading && future(b.upgradeEndsAt))
+          .map(b => ({ name: b.name || b.key || 'Building', level: b.queueTargetLevel || (b.level || 0) + 1, endsAt: b.upgradeEndsAt }))
+          .sort((a, b) => new Date(a.endsAt) - new Date(b.endsAt)),
+        shipYards: [makeShipYard('Moon dockyard', (fl?.dockyardLevel || 0) > 0 || (fl?.queueAll || []).length > 0, fl?.queueAll, fl?.maxQueueSize, future)],
+        fleet: { total: totalShips, classes },
+      });
+    }
+    const activeRaw = researchData.activeResearches || (researchData.activeResearch ? [researchData.activeResearch] : []);
+    const planetName = Object.fromEntries(planets.map(p => [p.id, p.name]));
+    const researchLevel = Object.fromEntries((researchData.research || []).map(x => [x.id, x.level]));
+    const research = activeRaw
+      .filter(r => future(r.endsAt))
+      .map(r => ({
+        name: r.name || r.researchName || r.definition?.name || r.researchKey || r.key || 'Research',
+        level: (researchLevel[r.id] ?? null) == null ? null : researchLevel[r.id] + 1,
+        planetId: r.planetId ?? null,
+        planetName: planetName[r.planetId] || null,
+        endsAt: r.endsAt,
+      }))
+      .sort((a, b) => new Date(a.endsAt) - new Date(b.endsAt));
+
+    const missions = (missionsData.missions || []).map(m => ({
+      id: m.id,
+      type: m.missionType || 'unknown',
+      status: m.status || null,
+      sourcePlanetId: m.sourcePlanetId ?? null,
+      arrivesAt: m.arrivesAt || null,
+      returnArrivesAt: m.returnArrivesAt || null,
+      returnDepartsAt: m.returnDepartsAt || null,
+      ships: (m.fleetComposition || []).reduce((s, f) => s + (f.quantity || 0), 0),
+    }));
+
+    return {
+      planets, moons, research, missions,
+      maxFleetSlots: missionsData.maxFleetSlots ?? null,
+      researchSlots: planets.filter(p => p.hasLab).length,
+      fetchedAt: now,
+    };
   } catch (err) {
     return { error: err.message };
   }

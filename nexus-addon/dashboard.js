@@ -17,11 +17,13 @@ import { initXenoTab, renderXenoStatsTab, setXnReportPage } from './tabs/xeno.js
 import { initFinderTab } from './tabs/finder.js';
 import { initMarketTab } from './tabs/market.js';
 import { registerAutomationTask, startAutomationScheduler } from './automation-scheduler.js';
+import { initHumanVerificationBanner } from './human-verification.js';
 import { renderGlobalTab } from './tabs/global.js';
 import { renderMiningTab, setMiningPage } from './tabs/mining.js';
 import { initPiratesTab, renderPirateStatsTab, renderPiratesTab, runPirateAutomations, setPirateCurrentPage } from './tabs/pirates.js';
 import { getEventBreakdownForMode, getResourcesLostForMode, getSeriesForMode, getTotalsForMode, populateEventOptions, renderByEventChart, renderCollected, renderEventsChart, renderLost, renderResourceChart, renderTable, setCurrentPage } from './tabs/surveys.js';
 import { renderTechTreeTab } from './tabs/techtree.js';
+import { initDashboardTab } from './tabs/dashboard.js';
 
 export async function loadAll() {
   const activeServer = await globalThis.nexusStorage?.getActiveServer?.() || { key: 's0' };
@@ -139,6 +141,10 @@ export function updateStatus(lastScrape, lastError) {
 // ── Render ─────────────────────────────────────────────────────────────────
 
 export function renderAll() {
+  if (activeTab === 'dashboard') {
+    initDashboardTab();
+    return;
+  }
   if (activeTab === 'global' || activeTab === 'statistics') {
     renderGlobalTab();
     return;
@@ -231,6 +237,7 @@ export function renderAll() {
 // ── Tabs ───────────────────────────────────────────────────────────────────
 
 export const TAB_CONTENT = {
+  dashboard: 'dashboard-content',
   global: 'global-content',
   surveys: 'main-content',
   pirates: 'pirates-content',
@@ -255,7 +262,7 @@ export const TAB_CONTENT = {
 const EXPERT_MODE_KEY = 'expert_mode_enabled';
 const EXPERT_TABS = new Set(['scouting', 'expeditions', 'xeno']);
 const HIDE_GLOBAL_CONTROLS_TABS = new Set([
-  'pirates', 'finder', 'asteroids', 'fleets', 'scouting', 'techtree', 'market', 'simulator', 'xeno',
+  'dashboard', 'pirates', 'finder', 'asteroids', 'fleets', 'scouting', 'techtree', 'market', 'simulator', 'xeno',
 ]);
 let expertModeEnabled = false;
 
@@ -271,8 +278,8 @@ function syncVisibleTabContent() {
 
 function enforceAllowedTab() {
   if (!expertModeEnabled && (isExpertTab(activeTab) || isExpertTab(activeMainTab))) {
-    setActiveTab('global');
-    activeMainTab = 'statistics';
+    setActiveTab('dashboard');
+    activeMainTab = 'dashboard';
   }
 }
 
@@ -638,6 +645,7 @@ registerAutomationTask('expeditions', () => {
   if (expertModeEnabled) return runExpeditionAutomations();
 });
 initExpertModeToggle()
+  .then(() => initHumanVerificationBanner())
   .then(() => loadAll())
   .then(() => {
     openHashTab();
@@ -659,16 +667,33 @@ maybeShowWhatsNew();
 // Show the latest changelog section once after an update (flag set by the
 // background's onInstalled handler).
 async function maybeShowWhatsNew() {
-  const { whatsnew_pending } = await browser.storage.local.get('whatsnew_pending');
+  const { whatsnew_pending, whatsnew_read_version } =
+    await browser.storage.local.get(['whatsnew_pending', 'whatsnew_read_version']);
   if (!whatsnew_pending) return;
+  if (whatsnew_pending === whatsnew_read_version) {
+    await browser.storage.local.remove('whatsnew_pending');
+    return;
+  }
+  await showWhatsNew(whatsnew_pending);
+  await browser.storage.local.set({ whatsnew_read_version: whatsnew_pending });
   await browser.storage.local.remove('whatsnew_pending');
+}
+
+async function showWhatsNew(version) {
   let body = 'See CHANGELOG.md for details.';
   try {
     const md = await (await fetch(browser.runtime.getURL('CHANGELOG.md'))).text();
     const m = md.match(/## \[[^\]]+\][^\n]*\n([\s\S]*?)(?=\n## \[|$)/);
     if (m) body = renderMarkdown(m[1].trim());
   } catch { /* keep fallback */ }
-  infoDialog(`What's new in v${whatsnew_pending}`, body);
+  await infoDialog(`What's new in v${version}`, body);
+}
+
+const versionLink = document.getElementById('footer-version');
+if (versionLink) {
+  const version = browser.runtime.getManifest().version;
+  versionLink.textContent = `v${version}`;
+  versionLink.addEventListener('click', e => { e.preventDefault(); void showWhatsNew(version); });
 }
 
 browser.storage.local.onChanged.addListener((changes, area) => {

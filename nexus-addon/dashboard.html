@@ -10,7 +10,8 @@
   <button id="expert-toggle" type="button" aria-label="Toggle expert mode"></button>
 
   <nav class="tabs">
-    <button class="tab main-tab active" data-tab="statistics">Statistics</button>
+    <button class="tab main-tab active" data-tab="dashboard">Dashboard</button>
+    <button class="tab main-tab" data-tab="statistics">Statistics</button>
     <button class="tab main-tab expert-only" data-tab="scouting">Scouting</button>
     <button class="tab main-tab" data-tab="asteroids">Asteroids</button>
     <button class="tab main-tab expert-only" data-tab="expeditions">Expeditions</button>
@@ -23,7 +24,9 @@
     <button class="tab main-tab" data-tab="simulator">Simulator</button>
   </nav>
 
-  <div class="subtabs show">
+  <div id="hv-banner" class="hv-banner" role="alert"></div>
+
+  <div class="subtabs">
     <button class="tab subtab active" data-tab="global">Global</button>
     <button class="tab subtab" data-tab="surveys">Surveys</button>
     <button class="tab subtab" data-tab="pirates-stats">Pirates</button>
@@ -57,7 +60,7 @@
     <iframe id="simulator-frame" src="simulator.html" title="Combat Simulator"></iframe>
   </div>
 
-  <div class="toolbar-panel global-filter-toolbar" id="global-controls">
+  <div class="toolbar-panel global-filter-toolbar" id="global-controls" style="display:none;">
     <label class="toolbar-field" for="mode-select">
       <span class="toolbar-label">View</span>
       <select id="mode-select" class="toolbar-select">
@@ -105,7 +108,9 @@
     </div>
   </div>
 
-  <div id="global-content" class="global-dashboard">
+  <div id="dashboard-content" class="global-dashboard"></div>
+
+  <div id="global-content" class="global-dashboard" style="display:none;">
     <section class="dashboard-panel global-overview-panel">
       <p class="global-intro">
         Combined across surveys, pirate raids, mining, debris (precise) and expeditions.
@@ -1277,7 +1282,13 @@
     </div>
   </div>
 
-  <div id="storage-footer" class="storage-footer"></div>
+  <div class="storage-footer footer-bar">
+    <span id="storage-footer"></span>
+    <span class="footer-links">
+      <a id="footer-version" class="footer-link" href="#" title="Show what's new in this version"></a>
+      <a class="footer-link" href="https://github.com/DopeEx/NexusOverseer" target="_blank" rel="noopener noreferrer">GitHub</a>
+    </span>
+  </div>
 
   <!-- Load order: polyfill + common.js first, tabs next, orchestrator last. -->
   <script src="browser-polyfill.js"></script>
