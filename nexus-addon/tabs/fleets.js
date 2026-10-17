@@ -17,9 +17,9 @@ const GROUP_LABELS = { combat: 'Combat', special: 'Special', recon: 'Recon', uti
 // editor shows at a glance which fields each hauler works. Colours match the
 // asteroid field-type palette.
 const MINING_SHIPS = {
-  miner:         { name: 'Mining Vessel', color: '#f0883e', mines: 'Ore, Plasma Core' },
-  gas_collector: { name: 'Gas Collector', color: '#79c0ff', mines: 'Hydrogen, Quantum Dust' },
-  ice_drill:     { name: 'Ice Drill',     color: '#a5d6ff', mines: 'Cryo-Ice, Dark Matter' },
+  miner:         { name: 'Mining Vessel', color: '#fb923c', mines: 'Ore, Plasma Core' },
+  gas_collector: { name: 'Gas Collector', color: '#60a5fa', mines: 'Hydrogen, Quantum Dust' },
+  ice_drill:     { name: 'Ice Drill',     color: '#67e8f9', mines: 'Cryo-Ice, Dark Matter' },
   excavator:     { name: 'Excavator',     color: '#e3b341', mines: '+20% fleet mining yield (all)' },
   freighter:     { name: 'Freighter',     color: '#8b949e', mines: 'Ore, Cryo-Ice (basic)' },
 };

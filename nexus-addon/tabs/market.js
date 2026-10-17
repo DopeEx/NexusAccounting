@@ -13,9 +13,9 @@ const RESOURCES = ['ore', 'silicates', 'hydrogen', 'alloys', 'cryo_ice',
   'quantum_dust', 'plasma_core', 'bio_extract', 'dark_matter', 'antimatter'];
 // Per-resource colours for the Offering / For amounts in the table.
 const RES_COLOR = {
-  ore: '#f0883e', silicates: '#56d364', hydrogen: '#79c0ff', alloys: '#e3b341',
-  cryo_ice: '#a5d6ff', quantum_dust: '#d2a8ff', plasma_core: '#ff7b72',
-  bio_extract: '#7ee787', dark_matter: '#bc8cff', antimatter: '#ffa657',
+  ore: '#fb923c', silicates: '#c084fc', hydrogen: '#60a5fa', alloys: '#94a3b8',
+  cryo_ice: '#67e8f9', quantum_dust: '#f472b6', plasma_core: '#f97316',
+  bio_extract: '#10b981', dark_matter: '#9333ea', antimatter: '#ef4444',
 };
 // Mean ratio after dropping the worst 5% (lowball listings nobody trades), so
 // the baseline reflects the real market rather than junk orders.

@@ -131,8 +131,8 @@ rt.onMessage.addListener((msg, sender, sendResponse) => {
 // Opened when the user clicks an asteroid live-search notification. Floating,
 // draggable, non-modal — same style as the ratio calculator.
 const TYPE_COLOR = {
-  ore: '#f0883e', gas: '#a371f7', ice: '#a5d6ff', plasma: '#ff7b72',
-  quantum: '#d2a8ff', dark: '#6e40c9',
+  ore: '#fb923c', gas: '#60a5fa', ice: '#67e8f9', plasma: '#f97316',
+  quantum: '#f472b6', dark: '#9333ea',
 };
 // Ship recommendation per field type: specialized ship + per-cycle extraction
 // (Stats.txt). ships = ceil( remaining / (rate * cycles * richness) ); an

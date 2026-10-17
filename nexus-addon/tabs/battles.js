@@ -400,7 +400,7 @@ export function renderBattlesTab() {
     }
     for (const [k, v] of Object.entries(res.rare || {})) {
       if (!v) continue;
-      out.push(makeStatCard(`${k.replace(/_/g, ' ')}${suffix}`, (signed && v >= 0 ? '+' : '') + fmt(v), 'rare'));
+      out.push(makeStatCard(`${k.replace(/_/g, ' ')}${suffix}`, (signed && v >= 0 ? '+' : '') + fmt(v), k));
     }
     return out;
   }
